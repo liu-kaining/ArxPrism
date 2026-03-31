@@ -61,6 +61,8 @@ class Neo4jClient:
     async def verify_connectivity(self) -> bool:
         """验证 Neo4j 连接性."""
         try:
+            if self._driver is None:
+                await self.connect()
             async with self._driver.session() as session:
                 result = await session.run("RETURN 1 AS verify")
                 await result.single()
@@ -86,6 +88,8 @@ class Neo4jClient:
         logger.info(f"Upserting paper graph for: {paper_id}")
 
         try:
+            if self._driver is None:
+                await self.connect()
             async with self._driver.session() as session:
                 await session.execute_write(
                     self._upsert_transaction,
@@ -289,6 +293,8 @@ class Neo4jClient:
             True if exists, False otherwise
         """
         try:
+            if self._driver is None:
+                await self.connect()
             async with self._driver.session() as session:
                 result = await session.run(
                     "MATCH (p:Paper {arxiv_id: $arxiv_id}) RETURN p",
@@ -318,6 +324,8 @@ class Neo4jClient:
         logger.info(f"Fetching paper graph for: {arxiv_id}")
 
         try:
+            if self._driver is None:
+                await self.connect()
             async with self._driver.session() as session:
                 result = await session.run(
                     """
@@ -393,6 +401,8 @@ class Neo4jClient:
         normalized_name = _normalize_name(method_name)
 
         try:
+            if self._driver is None:
+                await self.connect()
             async with self._driver.session() as session:
                 result = await session.run(
                     """
@@ -470,6 +480,48 @@ class Neo4jClient:
         except Exception as e:
             logger.error(f"Failed to fetch evolution tree: {e}")
             return {"nodes": [], "links": []}
+
+    async def search_papers(self, query: str = "", limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        按主题/关键词检索已入库论文（用于“查 SRE 主题”这条主路径）。
+
+        匹配字段：
+        - Paper.title
+        - Paper.core_problem
+        - Proposed method original_name/name（可选）
+
+        全部使用参数化查询，避免注入。
+        """
+        q = (query or "").strip().lower()
+        if self._driver is None:
+            await self.connect()
+
+        cypher = """
+        MATCH (p:Paper)
+        OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
+        WITH p, collect(DISTINCT coalesce(m.original_name, m.name)) AS methods
+        WHERE $q = "" OR toLower(coalesce(p.title,"")) CONTAINS $q
+           OR toLower(coalesce(p.core_problem,"")) CONTAINS $q
+           OR any(x IN methods WHERE toLower(coalesce(x,"")) CONTAINS $q)
+        RETURN
+          p.arxiv_id AS arxiv_id,
+          p.title AS title,
+          p.published_date AS published_date,
+          p.core_problem AS core_problem,
+          methods AS methods
+        ORDER BY p.published_date DESC
+        SKIP $offset
+        LIMIT $limit
+        """
+
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(cypher, q=q, limit=limit, offset=offset)
+                rows = await result.data()
+            return rows
+        except Exception as e:
+            logger.error(f"Failed to search papers: {e}")
+            return []
 
 
 # 单例实例

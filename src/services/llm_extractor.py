@@ -87,7 +87,10 @@ class LLMExtractor:
     """基于大模型的论文萃取服务 (支持指数退避重试)."""
 
     def __init__(self) -> None:
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        client_kwargs = {"api_key": settings.llm_api_key}
+        if settings.llm_base_url:
+            client_kwargs["base_url"] = settings.llm_base_url
+        self.client = AsyncOpenAI(**client_kwargs)
         self.max_retries = settings.llm_max_retries  # 最大重试次数 = 3
         self.base_delay = settings.llm_base_delay  # 基础延迟 = 2.0 秒
         self.model = settings.llm_model

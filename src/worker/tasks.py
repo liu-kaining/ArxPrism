@@ -77,8 +77,38 @@ def _is_redis_available() -> bool:
 
 
 # =============================================================================
-# Celery 应用 (延迟初始化)
+# Celery 应用
 # =============================================================================
+#
+# 重要：docker-compose 里 worker 的启动命令是：
+#   celery -A src.worker.tasks worker ...
+# Celery 会在导入该模块时查找名为 `celery` 的 Celery 实例。
+# 如果不提供，将报错：
+#   Module 'src.worker.tasks' has no attribute 'celery'
+#
+celery = Celery(
+    "arxprism",
+    broker=settings.celery_broker_url,
+    backend=settings.celery_result_backend,
+    include=["src.worker.tasks"],
+)
+
+celery.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    task_track_started=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+    task_soft_time_limit=300,  # 5 minutes per task
+    task_time_limit=600,  # 10 minutes hard limit
+    broker_connection_retry_on_startup=True,
+    broker_connection_retry=True,
+    broker_connection_max_retries=10,
+)
+
 _celery_app: Optional[Celery] = None
 
 
@@ -91,31 +121,8 @@ def get_celery_app() -> Optional[Celery]:
     if not _is_redis_available():
         return None
 
-    _celery_app = Celery(
-        "arxprism",
-        broker=settings.celery_broker_url,
-        backend=settings.celery_result_backend,
-        include=["src.worker.tasks"]
-    )
-
-    _celery_app.conf.update(
-        task_serializer="json",
-        accept_content=["json"],
-        result_serializer="json",
-        timezone="UTC",
-        enable_utc=True,
-        task_track_started=True,
-        task_acks_late=True,
-        worker_prefetch_multiplier=1,
-        task_soft_time_limit=300,  # 5 minutes per task
-        task_time_limit=600,  # 10 minutes hard limit
-        # Celery 5.x: 必须显式开启，否则 Redis 没 ready 时直接退出
-        broker_connection_retry_on_startup=True,
-        broker_connection_retry=True,
-        broker_connection_max_retries=10,
-    )
-
-    return _celery_app
+    _celery_app = celery
+    return celery
 
 
 # =============================================================================
@@ -195,59 +202,34 @@ async def _process_paper_async(paper_content: dict) -> dict:
 # Celery Task 注册
 # =============================================================================
 
-def _create_celery_tasks() -> None:
-    """创建并注册 Celery Tasks (延迟初始化)."""
-    celery_app = get_celery_app()
-    if celery_app is None:
-        return
-
-    @celery_app.task(
-        bind=True,
-        max_retries=3,
-        default_retry_delay=60,
-        name="process_paper_task"
-    )
-    def process_paper_task(self, paper_content: dict) -> dict:
-        """
-        Celery Task: 处理单篇论文.
-
-        Args:
-            paper_content: Dict representation of PaperContent
-
-        Returns:
-            Dict with status and paper_id
-        """
-        try:
-            # 直接运行异步逻辑，不再创建新的事件循环
-            return _run_async(_process_paper_async(paper_content))
-        except Exception as e:
-            logger.error(f"Task failed: {e}")
-            # 触发 Celery 重试
-            raise self.retry(exc=e)
-
-    # 注册到全局注册表
-    global _celery_tasks
-    _celery_tasks["process_paper_task"] = process_paper_task
-    logger.info("Celery task 'process_paper_task' registered")
-
-
-# 全局 Task 注册表
-_celery_tasks: dict = {}
-
-
 def get_process_paper_task():
     """获取 process_paper_task 函数 (Celery Task 或同步回退)."""
-    if "process_paper_task" in _celery_tasks:
-        return _celery_tasks["process_paper_task"]
-
-    celery_app = get_celery_app()
-    if celery_app is not None:
-        _create_celery_tasks()
-        if "process_paper_task" in _celery_tasks:
-            return _celery_tasks["process_paper_task"]
-
-    # 返回异步回退函数 (同步模式直接调用 _process_paper_async)
+    if get_celery_app() is not None:
+        return process_paper_task
     return _process_paper_async
+
+
+@celery.task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="process_paper_task",
+)
+def process_paper_task(self, paper_content: dict) -> dict:
+    """
+    Celery Task: 处理单篇论文.
+
+    Args:
+        paper_content: Dict representation of PaperContent
+
+    Returns:
+        Dict with status and paper_id
+    """
+    try:
+        return _run_async(_process_paper_async(paper_content))
+    except Exception as e:
+        logger.error(f"Task failed: {e}")
+        raise self.retry(exc=e)
 
 
 # =============================================================================
@@ -306,10 +288,87 @@ def trigger_pipeline_sync(topic_query: str, max_results: int = 10) -> dict:
         "results": results
     }
 
+async def trigger_pipeline_sync_async(topic_query: str, max_results: int = 10) -> dict:
+    """
+    同步回退（异步版本）: 供 FastAPI 这类已有事件循环的场景使用。
+    """
+    logger.info(f"[SYNC MODE][ASYNC] Processing pipeline: query='{topic_query}', max_results={max_results}")
+
+    papers = await arxiv_radar.fetch_recent_papers(topic_query, max_results)
+    logger.info(f"[SYNC MODE][ASYNC] Fetched {len(papers)} papers")
+
+    results = []
+    for paper in papers:
+        content_dict = {
+            "arxiv_id": paper.arxiv_id,
+            "title": paper.title,
+            "authors": paper.authors,
+            "published_date": paper.published_date,
+            "text_content": paper.text_content,
+            "html_url": paper.html_url,
+        }
+        result = await _process_paper_async(content_dict)
+        results.append(result)
+        logger.debug(f"[SYNC MODE][ASYNC] Processed paper {paper.arxiv_id}: {result['status']}")
+
+    success_count = sum(1 for r in results if r["status"] == "success")
+    logger.info(f"[SYNC MODE][ASYNC] Pipeline complete: {success_count}/{len(results)} succeeded")
+
+    return {
+        "status": "sync_completed",
+        "mode": "synchronous_fallback_async",
+        "total": len(results),
+        "success": success_count,
+        "failed": len(results) - success_count,
+        "results": results,
+    }
+
 
 # =============================================================================
 # 流水线触发入口
 # =============================================================================
+
+async def trigger_pipeline_task_async(topic_query: str, max_results: int = 10) -> dict:
+    """
+    触发流水线（异步版本）.
+
+    给 FastAPI/Async 场景使用，避免在已有事件循环中调用 run_until_complete。
+    """
+    celery_app = get_celery_app()
+
+    if celery_app is None:
+        return await trigger_pipeline_sync_async(topic_query, max_results)
+
+    logger.info(f"Triggering pipeline via Celery: query='{topic_query}', max_results={max_results}")
+
+    papers = await arxiv_radar.fetch_recent_papers(topic_query, max_results)
+    logger.info(f"Fetched {len(papers)} new papers")
+
+    task_func = get_process_paper_task()
+
+    task_ids = []
+    for paper in papers:
+        content_dict = {
+            "arxiv_id": paper.arxiv_id,
+            "title": paper.title,
+            "authors": paper.authors,
+            "published_date": paper.published_date,
+            "text_content": paper.text_content,
+            "html_url": paper.html_url,
+        }
+
+        if hasattr(task_func, "delay"):
+            task = task_func.delay(content_dict)
+            task_ids.append(task.id)
+            logger.debug(f"Dispatched task {task.id} for paper {paper.arxiv_id}")
+        else:
+            # fallback (shouldn't happen here, but keep behavior consistent)
+            result = await task_func(content_dict)
+            logger.debug(f"Async processing for paper {paper.arxiv_id}: {result['status']}")
+
+    logger.info(f"Pipeline triggered: {len(task_ids)} tasks dispatched")
+    return {"status": "dispatched", "task_count": len(task_ids), "task_ids": task_ids}
+
 
 def trigger_pipeline_task(topic_query: str, max_results: int = 10) -> dict:
     """
@@ -325,53 +384,13 @@ def trigger_pipeline_task(topic_query: str, max_results: int = 10) -> dict:
     Returns:
         Dict with task IDs and status
     """
-    celery_app = get_celery_app()
+    # 同步封装：给非 async 场景使用（例如 CLI / 同步调用）
+    try:
+        asyncio.get_running_loop()
+        # 已有事件循环运行中：请改用 trigger_pipeline_task_async
+        raise RuntimeError("trigger_pipeline_task called inside a running event loop; use trigger_pipeline_task_async")
+    except RuntimeError as e:
+        if "no running event loop" not in str(e).lower():
+            raise
 
-    if celery_app is None:
-        # Redis 不可用 - 回退到同步模式
-        return trigger_pipeline_sync(topic_query, max_results)
-
-    # 使用 Celery 异步分发任务
-    logger.info(f"Triggering pipeline via Celery: query='{topic_query}', max_results={max_results}")
-
-    async def _run():
-        # Fetch papers
-        papers = await arxiv_radar.fetch_recent_papers(topic_query, max_results)
-        logger.info(f"Fetched {len(papers)} new papers")
-
-        # Ensure task is registered
-        task_func = get_process_paper_task()
-
-        # Dispatch tasks
-        task_ids = []
-        for paper in papers:
-            content_dict = {
-                "arxiv_id": paper.arxiv_id,
-                "title": paper.title,
-                "authors": paper.authors,
-                "published_date": paper.published_date,
-                "text_content": paper.text_content,
-                "html_url": paper.html_url
-            }
-
-            if hasattr(task_func, 'delay'):
-                # It's a Celery task
-                task = task_func.delay(content_dict)
-                task_ids.append(task.id)
-                logger.debug(f"Dispatched task {task.id} for paper {paper.arxiv_id}")
-            else:
-                # It's the async fallback function
-                result = await task_func(content_dict)
-                logger.debug(f"Async processing for paper {paper.arxiv_id}: {result['status']}")
-
-        return task_ids
-
-    # Run async code in event loop
-    task_ids = _run_async(_run())
-
-    logger.info(f"Pipeline triggered: {len(task_ids)} tasks dispatched")
-    return {
-        "status": "dispatched",
-        "task_count": len(task_ids),
-        "task_ids": task_ids
-    }
+    return _run_async(trigger_pipeline_task_async(topic_query, max_results))

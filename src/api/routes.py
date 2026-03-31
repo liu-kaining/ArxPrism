@@ -21,14 +21,14 @@ from src.models.schemas import (
     APIResponse,
     PipelineTriggerRequest,
 )
-from src.worker.tasks import trigger_pipeline_task
+from src.worker.tasks import trigger_pipeline_task_async
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["pipeline", "graph"])
 
 
-@router.post("/pipeline/trigger", response_model=APIResponse)
+@router.post("/pipeline/trigger", response_model=APIResponse, status_code=202)
 async def trigger_pipeline(request: PipelineTriggerRequest) -> APIResponse:
     """
     触发论文萃取流水线.
@@ -49,7 +49,7 @@ async def trigger_pipeline(request: PipelineTriggerRequest) -> APIResponse:
 
     try:
         # Dispatch to Celery (自动回退到同步模式如果 Redis 不可用)
-        result = trigger_pipeline_task(
+        result = await trigger_pipeline_task_async(
             topic_query=request.topic_query,
             max_results=request.max_results
         )
@@ -193,3 +193,23 @@ async def get_evolution_tree(
     except Exception as e:
         logger.error(f"Failed to fetch evolution tree: {e}")
         raise HTTPException(status_code=500, detail=f"Evolution tree fetch failed: {str(e)}")
+
+
+@router.get("/papers", response_model=APIResponse)
+async def search_papers(
+    query: str = Query("", description="Keyword/topic to search in stored papers"),
+    limit: int = Query(20, ge=1, le=100, description="Page size"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+) -> APIResponse:
+    """
+    按主题/关键词检索已入库论文列表（主路径：查 SRE 主题）。
+
+    - query 为空：返回最近入库论文
+    - query 非空：在 title/core_problem/method 中做 contains 匹配
+    """
+    try:
+        rows = await neo4j_client.search_papers(query=query, limit=limit, offset=offset)
+        return APIResponse(code=200, message="success", data={"query": query, "limit": limit, "offset": offset, "papers": rows})
+    except Exception as e:
+        logger.error(f"Failed to search papers: {e}")
+        raise HTTPException(status_code=500, detail=f"Paper search failed: {str(e)}")

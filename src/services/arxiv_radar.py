@@ -175,16 +175,30 @@ class ArxivRadar:
         logger.info(f"Fetching paper: {arxiv_id}")
 
         try:
-            html_url = paper.html_url
+            # arxiv 包不同版本的 Result 结构不同：有的没有 html_url
+            html_url = getattr(paper, "html_url", None)
+            if not html_url:
+                # 尝试构造 arXiv HTML 页面（不带版本号）
+                html_url = f"https://arxiv.org/html/{arxiv_id}"
 
-            # 使用异步 HTTP 客户端 (避免阻塞 FastAPI 事件循环)
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.get(html_url)
-                response.raise_for_status()
-                html = response.text
+            text_content: str = ""
+            try:
+                # 使用异步 HTTP 客户端 (避免阻塞 FastAPI 事件循环)
+                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                    response = await client.get(html_url)
+                    response.raise_for_status()
+                    html = response.text
 
-            # Step 1: 清洗 HTML
-            text_content = self._clean_html(html)
+                # Step 1: 清洗 HTML
+                text_content = self._clean_html(html)
+            except Exception as e:
+                # 兜底：至少用 arxiv summary 跑通链路（可后续再优化为 PDF/TeX 全文）
+                logger.warning(
+                    f"Paper {arxiv_id}: Failed to fetch/parse HTML ({html_url}): {e}. "
+                    f"Falling back to arXiv summary."
+                )
+                text_content = (getattr(paper, "summary", "") or "").strip()
+                html_url = getattr(paper, "entry_id", html_url) or html_url
 
             # Step 2: 内容长度校验
             # Reference: TECH_DESIGN.md Section 2
@@ -199,7 +213,11 @@ class ArxivRadar:
                 arxiv_id=arxiv_id,
                 title=paper.title,
                 authors=[author.name for author in paper.authors],
-                published_date=self._format_date(paper.published_date),
+                published_date=self._format_date(
+                    getattr(paper, "published", None)
+                    or getattr(paper, "published_date", None)
+                    or getattr(paper, "updated", None)
+                ),
                 text_content=text_content,
                 html_url=html_url
             )

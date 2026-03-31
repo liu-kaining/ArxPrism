@@ -24,8 +24,8 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    # OpenAI API 配置
-    openai_api_key: str = ""
+    # LLM 配置（统一走 OpenAI-compatible API）
+    llm_provider: str = "openai_compatible"
 
     # Neo4j 数据库配置 (Docker 网络中使用 neo4j 服务名)
     neo4j_uri: str = "bolt://neo4j:7687"
@@ -43,7 +43,9 @@ class Settings(BaseSettings):
     celery_broker_url: Optional[str] = None
     celery_result_backend: Optional[str] = None
 
-    # LLM 配置
+    # LLM 连接参数
+    llm_api_key: str = ""
+    llm_base_url: Optional[str] = None  # e.g. https://api.openai.com/v1 or any OpenAI-compatible endpoint
     llm_model: str = "gpt-4o-mini"
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.1
@@ -61,6 +63,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, 'celery_broker_url', self.redis_url)
         if self.celery_result_backend is None:
             object.__setattr__(self, 'celery_result_backend', self.redis_url)
+
+        # 不再兼容 OPENAI_*：仅使用 LLM_* 配置
 
 
 @lru_cache

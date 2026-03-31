@@ -63,7 +63,11 @@ services:
     ports:
       - "8000:8000"  # FastAPI
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # LLM (preferred): configure multi-provider via OpenAI-compatible API
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_MODEL=${LLM_MODEL}
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=password
@@ -99,7 +103,11 @@ services:
       dockerfile: Dockerfile
     container_name: arxprism-worker
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # LLM (preferred): configure multi-provider via OpenAI-compatible API
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_MODEL=${LLM_MODEL}
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=password
@@ -134,7 +142,11 @@ services:
     ports:
       - "8501:8501"  # Streamlit
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Frontend doesn't call LLM directly, but pass through for convenience/debug
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_MODEL=${LLM_MODEL}
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=password
