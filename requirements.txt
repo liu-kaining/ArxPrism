@@ -1,0 +1,32 @@
+# ArxPrism Dependencies
+# Generated for Docker container builds
+
+# Web Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Data Validation
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+
+# Database
+neo4j>=5.25.0
+
+# LLM & API
+openai>=1.55.0
+httpx>=0.27.0
+
+# Task Queue
+celery>=5.4.0
+redis>=5.0.0
+
+# arXiv & HTML Parsing
+arxiv>=2.1.0
+beautifulsoup4>=4.12.0
+
+# Frontend
+streamlit>=1.40.0
+streamlit-agraph>=0.0.45
+
+# Utilities
+python-dotenv>=1.0.0
