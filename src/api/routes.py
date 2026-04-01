@@ -213,3 +213,75 @@ async def search_papers(
     except Exception as e:
         logger.error(f"Failed to search papers: {e}")
         raise HTTPException(status_code=500, detail=f"Paper search failed: {str(e)}")
+
+
+@router.get("/papers/{arxiv_id}", response_model=APIResponse)
+async def get_paper_detail(arxiv_id: str) -> APIResponse:
+    """
+    获取论文详情.
+
+    GET /api/v1/papers/{arxiv_id}
+
+    返回论文的完整信息，包括：
+    - 基本元数据 (标题、作者、日期)
+    - 萃取数据 (核心问题、提出方法、创新点、局限性)
+    - 实验数据 (基线、数据集、指标)
+    - 关联图谱
+
+    Args:
+        arxiv_id: arXiv 论文 ID (例如: "2506.02009")
+
+    Returns:
+        Paper detail with extraction data and graph
+    """
+    logger.info(f"Fetching paper detail: arxiv_id={arxiv_id}")
+
+    try:
+        # 获取论文基本信息
+        paper_data = await neo4j_client.get_paper_by_id(arxiv_id)
+
+        if not paper_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Paper {arxiv_id} not found"
+            )
+
+        # 获取关联图谱
+        graph_data = await neo4j_client.get_paper_graph(arxiv_id)
+
+        # 格式化图谱数据
+        nodes = [
+            {
+                "id": n["id"],
+                "labels": n["labels"],
+                "properties": n["properties"]
+            }
+            for n in graph_data.get("nodes", [])
+        ]
+
+        relationships = [
+            {
+                "source_id": r["source_id"],
+                "target_id": r["target_id"],
+                "type": r["type"]
+            }
+            for r in graph_data.get("relationships", [])
+        ]
+
+        return APIResponse(
+            code=200,
+            message="success",
+            data={
+                "paper": paper_data,
+                "graph": {
+                    "nodes": nodes,
+                    "relationships": relationships
+                }
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch paper detail: {e}")
+        raise HTTPException(status_code=500, detail=f"Paper detail fetch failed: {str(e)}")

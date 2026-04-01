@@ -5,6 +5,8 @@ arXiv Radar Service
 获取论文元数据，提取 summary 或清洗 HTML 正文。
 实现幂等性检查、速率限制、内容长度校验。
 
+领域预设优化：通过构建精确的 arXiv 搜索查询，提高论文相关性。
+
 Reference: ARCHITECTURE.md Section 2 (Module A), TECH_DESIGN.md Section 3,
 CODE_REVIEW.md Section 2, 4
 """
@@ -21,8 +23,61 @@ from bs4 import BeautifulSoup
 
 from src.core.config import settings
 from src.database.neo4j_client import neo4j_client
+from src.models.task_models import get_domain_preset, DomainPreset
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# 领域预设与查询构建
+# =============================================================================
+
+def build_optimized_query(user_query: str, domain_preset_key: str = "sre") -> str:
+    """
+    构建优化的 arXiv 搜索查询.
+
+    通过领域预设添加包含词、排除词和类别限定，大幅提高搜索结果相关性。
+
+    Args:
+        user_query: 用户输入的原始查询
+        domain_preset_key: 领域预设键名 (sre/aiops/microservices/distributed/cloudnative/custom)
+
+    Returns:
+        优化后的 arXiv 搜索查询字符串
+
+    Example:
+        >>> build_optimized_query("site reliability engineering", "sre")
+        '(all:"site reliability engineering" OR all:"incident management" OR all:"SLO") ANDNOT (all:"CLIP" OR all:"image segmentation") AND (cat:cs.SE OR cat:cs.DC)'
+    """
+    preset = get_domain_preset(domain_preset_key)
+
+    # custom 预设不添加任何过滤
+    if preset.key == "custom":
+        logger.info(f"Using custom query mode: '{user_query}'")
+        return user_query
+
+    # 构建核心查询：用户查询 + 包含词
+    include_parts = [f'all:"{user_query}"']
+
+    # 添加领域相关词 (最多取前3个避免查询过长)
+    for term in preset.include_terms[:3]:
+        include_parts.append(f'all:"{term}"')
+
+    # OR 组合包含条件
+    query = f'({" OR ".join(include_parts)})'
+
+    # 添加排除词
+    if preset.exclude_terms:
+        exclude_parts = [f'all:"{term}"' for term in preset.exclude_terms]
+        query += f' ANDNOT ({" OR ".join(exclude_parts)})'
+
+    # 添加 arXiv 类别限定
+    if preset.categories:
+        cat_parts = [f'cat:{cat}' for cat in preset.categories]
+        query += f' AND ({" OR ".join(cat_parts)})'
+
+    logger.info(f"Built optimized query for domain '{preset.name}': {query}")
+    return query
 
 
 @dataclass
@@ -46,31 +101,36 @@ class ArxivRadar:
     async def fetch_recent_papers(
         self,
         query: str,
-        max_results: int = 10
+        max_results: int = 10,
+        domain_preset: str = "sre"
     ) -> list[PaperContent]:
         """
         搜索并获取 arXiv 论文.
 
         实现完整的流水线:
-        1. 搜索 arXiv
-        2. 幂等性检查 (检查是否已存在于 Neo4j)
-        3. 异步获取 HTML 并清洗
-        4. 内容长度校验
-        5. 返回有效论文列表
+        1. 构建优化查询 (基于领域预设)
+        2. 搜索 arXiv
+        3. 幂等性检查 (检查是否已存在于 Neo4j)
+        4. 异步获取 HTML 并清洗
+        5. 内容长度校验
+        6. 返回有效论文列表
 
         Args:
-            query: arXiv 搜索查询
+            query: arXiv 搜索查询 (用户输入)
             max_results: 最大获取数量
+            domain_preset: 领域预设 (sre/aiops/microservices/distributed/cloudnative/custom)
 
         Returns:
             List of PaperContent for new papers
         """
-        logger.info(f"Fetching papers: query='{query}', max_results={max_results}")
+        # 构建优化查询
+        optimized_query = build_optimized_query(query, domain_preset)
+        logger.info(f"Fetching papers: original='{query}', optimized='{optimized_query}', max_results={max_results}")
 
-        # Step 1: Search arXiv
-        papers = self._search_papers(query, max_results)
+        # Step 1: Search arXiv with optimized query
+        papers = self._search_papers(optimized_query, max_results)
         if not papers:
-            logger.warning(f"No papers found for query: {query}")
+            logger.warning(f"No papers found for query: {optimized_query}")
             return []
 
         # Step 2: Fetch each paper with dedup and rate limiting
@@ -100,13 +160,13 @@ class ArxivRadar:
         搜索 arXiv 论文.
 
         Args:
-            query: arXiv 搜索查询
+            query: arXiv 搜索查询 (已优化的)
             max_results: 最大结果数
 
         Returns:
             List of arxiv.Result
         """
-        logger.info(f"Searching arXiv: query='{query}', max_results={max_results}")
+        logger.info(f"Searching arXiv with optimized query: '{query}'")
 
         try:
             client = arxiv.Client()

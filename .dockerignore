@@ -1,0 +1,54 @@
+# Dependencies
+frontend/node_modules
+frontend/.next
+backend/venv
+backend/__pycache__
+*.pyc
+__pycache__
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Docker
+docker-compose.yml
+Dockerfile*
+.dockerignore
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Documentation
+README.md
+docs/
+*.md
+
+# Tests
+tests/
+__tests__/
+*.test.py
+*.spec.py
+
+# Logs
+*.log
+logs/
+
+# Temp files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Frontend build artifacts (we rebuild in Docker)
+frontend/src/app/*.css
+frontend/src/components/
+frontend/src/lib/
+frontend/src/styles/

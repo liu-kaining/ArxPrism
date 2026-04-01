@@ -523,6 +523,77 @@ class Neo4jClient:
             logger.error(f"Failed to search papers: {e}")
             return []
 
+    async def get_paper_by_id(self, arxiv_id: str) -> Optional[Dict[str, Any]]:
+        """
+        根据 arXiv ID 获取论文详情.
+
+        Args:
+            arxiv_id: arXiv 论文 ID
+
+        Returns:
+            论文详情字典，包含基本信息和萃取数据
+        """
+        if self._driver is None:
+            await self.connect()
+
+        cypher = """
+        MATCH (p:Paper {arxiv_id: $arxiv_id})
+        OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
+        OPTIONAL MATCH (p)-[:INNOVATES]->(i:Innovation)
+        OPTIONAL MATCH (p)-[:HAS_LIMITATION]->(l:Limitation)
+        OPTIONAL MATCH (p)-[:OUTPERFORMS]->(b:Method)
+        OPTIONAL MATCH (p)-[:USES_DATASET]->(d:Dataset)
+        OPTIONAL MATCH (p)-[:PROPOSES]->(m2:Method)-[:USES_DATASET]->(m2d:Dataset)
+        OPTIONAL MATCH (p)-[:PROPOSES]->(m3:Method)-[:EVALUATES_USING]->(mt:Metric)
+
+        RETURN
+          p.arxiv_id AS arxiv_id,
+          p.title AS title,
+          p.published_date AS published_date,
+          p.core_problem AS core_problem,
+          p.summary AS summary,
+          collect(DISTINCT {
+            name: coalesce(m.original_name, m.name),
+            description: m.description
+          }) AS methods,
+          collect(DISTINCT i.content) AS innovations,
+          collect(DISTINCT l.content) AS limitations,
+          collect(DISTINCT coalesce(b.original_name, b.name)) AS baselines,
+          collect(DISTINCT d.name) AS datasets,
+          collect(DISTINCT mt.name) AS metrics
+        """
+
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(cypher, arxiv_id=arxiv_id)
+                rows = await result.data()
+
+            if not rows:
+                return None
+
+            row = rows[0]
+            # 提取方法名称列表
+            method_names = [m["name"] for m in row["methods"] if m.get("name")]
+
+            return {
+                "arxiv_id": row["arxiv_id"],
+                "title": row["title"],
+                "published_date": row.get("published_date", ""),
+                "core_problem": row.get("core_problem", ""),
+                "summary": row.get("summary", ""),
+                "authors": [],  # 作者信息可能需要单独存储或从其他来源获取
+                "proposed_method": method_names[0] if method_names else "",
+                "innovations": [i for i in row["innovations"] if i],
+                "limitations": [l for l in row["limitations"] if l],
+                "baselines": [b for b in row["baselines"] if b],
+                "datasets": [d for d in row["datasets"] if d],
+                "metrics": [m for m in row["metrics"] if m],
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get paper by id: {e}")
+            return None
+
 
 # 单例实例
 neo4j_client = Neo4jClient()
