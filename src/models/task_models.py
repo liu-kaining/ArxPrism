@@ -166,7 +166,100 @@ class TaskSummary(BaseModel):
 
 
 # =============================================================================
-# 领域预设配置
+# 预设主题分类 (英文搜索)
+# =============================================================================
+
+PRESET_TOPICS = {
+    "sre": {
+        "name": "站点可靠性工程",
+        "name_en": "Site Reliability Engineering",
+        "query": "site reliability engineering OR SRE OR incident management OR error budget",
+        "exclude": "CLIP OR image OR vision",
+        "categories": ["cs.SE", "cs.DC"]
+    },
+    "ha": {
+        "name": "高可用架构",
+        "name_en": "High Availability Architecture",
+        "query": "high availability OR fault tolerance OR disaster recovery OR SLA",
+        "exclude": "",
+        "categories": ["cs.DC", "cs.SE"]
+    },
+    "ai": {
+        "name": "人工智能",
+        "name_en": "Artificial Intelligence",
+        "query": "artificial intelligence OR machine learning OR deep learning",
+        "exclude": "computer vision OR image recognition",
+        "categories": ["cs.AI", "cs.LG"]
+    },
+    "llm": {
+        "name": "大语言模型",
+        "name_en": "Large Language Models",
+        "query": "large language model OR LLM OR GPT OR transformer OR BERT OR instruction tuning",
+        "exclude": "image OR vision OR speech",
+        "categories": ["cs.CL", "cs.AI", "cs.LG"]
+    },
+    "distributed": {
+        "name": "分布式架构",
+        "name_en": "Distributed Systems",
+        "query": "distributed system OR distributed computing OR consensus OR raft OR paxos OR distributed database",
+        "exclude": "",
+        "categories": ["cs.DC"]
+    },
+    "cloudnative": {
+        "name": "云原生",
+        "name_en": "Cloud Native",
+        "query": "cloud native OR kubernetes OR container OR docker OR service mesh OR istio OR helm",
+        "exclude": "",
+        "categories": ["cs.DC", "cs.SE"]
+    },
+    "observability": {
+        "name": "可观测性",
+        "name_en": "Observability",
+        "query": "observability OR monitoring OR tracing OR logging OR metrics OR opentelemetry OR prometheus OR grafana",
+        "exclude": "",
+        "categories": ["cs.SE", "cs.DC"]
+    },
+    "security": {
+        "name": "安全",
+        "name_en": "Security",
+        "query": "security OR authentication OR authorization OR encryption OR zero trust",
+        "exclude": "image OR video",
+        "categories": ["cs.CR", "cs.SE"]
+    },
+    # 金融相关主题
+    "quant": {
+        "name": "量化交易",
+        "name_en": "Quantitative Trading",
+        "query": "quantitative trading OR algorithmic trading OR trading strategy OR high-frequency trading OR statistical arbitrage",
+        "exclude": "image OR video OR speech",
+        "categories": ["q-fin.TR", "q-fin.PM", "cs.LG", "stat.ML"]
+    },
+    "fintech": {
+        "name": "金融科技",
+        "name_en": "Financial Technology",
+        "query": "financial technology OR fintech OR digital finance OR blockchain finance OR decentralized finance",
+        "exclude": "image OR video",
+        "categories": ["q-fin.TR", "q-fin.GN", "cs.CR", "cs.DC"]
+    },
+    "fe": {
+        "name": "金融工程",
+        "name_en": "Financial Engineering",
+        "query": "financial engineering OR derivatives pricing OR risk management OR portfolio optimization OR credit risk",
+        "exclude": "image OR video",
+        "categories": ["q-fin.TR", "q-fin.GN", "q-fin.RM", "math.OC"]
+    },
+    "market_prediction": {
+        "name": "预测市场",
+        "name_en": "Prediction Markets",
+        "query": "prediction market OR forecasting platform OR crowd forecasting OR information aggregation OR speculative markets",
+        "exclude": "",
+        "categories": ["q-fin.TR", "q-fin.GN", "econ.GN", "cs.SI"]
+    }
+}
+
+
+# =============================================================================
+# 领域预设配置 (兼容旧版本)
 # =============================================================================
 
 class DomainPreset(BaseModel):
@@ -174,14 +267,17 @@ class DomainPreset(BaseModel):
 
     key: str = Field(description="预设键名")
     name: str = Field(description="预设显示名称")
+    name_en: str = Field(default="", description="预设英文名称")
+    query: str = Field(default="", description="预设英文查询")
+    exclude: str = Field(default="", description="排除词")
     description: str = Field(description="预设描述")
     include_terms: List[str] = Field(
         default_factory=list,
-        description="包含的搜索词"
+        description="包含的搜索词 (旧版本兼容)"
     )
     exclude_terms: List[str] = Field(
         default_factory=list,
-        description="排除的搜索词"
+        description="排除的搜索词 (旧版本兼容)"
     )
     categories: List[str] = Field(
         default_factory=list,
@@ -189,11 +285,24 @@ class DomainPreset(BaseModel):
     )
 
 
+def _build_query_from_terms(include_terms: List[str], exclude_terms: List[str], categories: List[str]) -> tuple[str, str]:
+    """从词列表构建查询字符串和排除词."""
+    query_parts = []
+    for term in include_terms[:3]:
+        query_parts.append(term)
+    query = " OR ".join(query_parts) if query_parts else ""
+    exclude = " OR ".join(exclude_terms) if exclude_terms else ""
+    return query, exclude
+
+
 # 预定义的领域预设
 DOMAIN_PRESETS: dict[str, DomainPreset] = {
     "sre": DomainPreset(
         key="sre",
-        name="站点可靠性工程 (SRE)",
+        name="站点可靠性工程",
+        name_en="Site Reliability Engineering",
+        query="site reliability engineering OR SRE OR incident management OR error budget",
+        exclude="CLIP OR image OR vision",
         description="Site Reliability Engineering, Incident Management, SLO/SLI",
         include_terms=[
             "site reliability engineering",
@@ -212,9 +321,70 @@ DOMAIN_PRESETS: dict[str, DomainPreset] = {
         ],
         categories=["cs.SE", "cs.DC"]
     ),
+    "ha": DomainPreset(
+        key="ha",
+        name="高可用架构",
+        name_en="High Availability Architecture",
+        query="high availability OR fault tolerance OR disaster recovery OR SLA",
+        exclude="",
+        description="High Availability, Fault Tolerance, Disaster Recovery",
+        include_terms=[
+            "high availability",
+            "fault tolerance",
+            "disaster recovery",
+            "SLA",
+            "redundancy"
+        ],
+        exclude_terms=[],
+        categories=["cs.DC", "cs.SE"]
+    ),
+    "ai": DomainPreset(
+        key="ai",
+        name="人工智能",
+        name_en="Artificial Intelligence",
+        query="artificial intelligence OR machine learning OR deep learning",
+        exclude="computer vision OR image recognition",
+        description="AI, Machine Learning, Deep Learning",
+        include_terms=[
+            "artificial intelligence",
+            "machine learning",
+            "deep learning",
+            "neural network"
+        ],
+        exclude_terms=[
+            "computer vision",
+            "image recognition"
+        ],
+        categories=["cs.AI", "cs.LG"]
+    ),
+    "llm": DomainPreset(
+        key="llm",
+        name="大语言模型",
+        name_en="Large Language Models",
+        query="large language model OR LLM OR GPT OR transformer OR BERT OR instruction tuning",
+        exclude="image OR vision OR speech",
+        description="Large Language Models, LLM, GPT, Transformer",
+        include_terms=[
+            "large language model",
+            "LLM",
+            "GPT",
+            "transformer",
+            "BERT",
+            "instruction tuning"
+        ],
+        exclude_terms=[
+            "image",
+            "vision",
+            "speech"
+        ],
+        categories=["cs.CL", "cs.AI", "cs.LG"]
+    ),
     "aiops": DomainPreset(
         key="aiops",
         name="AIOps 智能运维",
+        name_en="AIOps",
+        query="AIOps OR log anomaly OR root cause analysis OR fault diagnosis",
+        exclude="image OR video",
         description="AIOps, Log Anomaly Detection, Root Cause Analysis",
         include_terms=[
             "AIOps",
@@ -235,6 +405,9 @@ DOMAIN_PRESETS: dict[str, DomainPreset] = {
     "microservices": DomainPreset(
         key="microservices",
         name="微服务架构",
+        name_en="Microservices Architecture",
+        query="microservices OR service mesh OR distributed tracing",
+        exclude="",
         description="Microservices, Service Mesh, Distributed Tracing",
         include_terms=[
             "microservices",
@@ -249,7 +422,10 @@ DOMAIN_PRESETS: dict[str, DomainPreset] = {
     ),
     "distributed": DomainPreset(
         key="distributed",
-        name="分布式系统",
+        name="分布式架构",
+        name_en="Distributed Systems",
+        query="distributed system OR distributed computing OR consensus OR raft OR paxos",
+        exclude="",
         description="Distributed Systems, Consensus, Fault Tolerance",
         include_terms=[
             "distributed system",
@@ -257,7 +433,9 @@ DOMAIN_PRESETS: dict[str, DomainPreset] = {
             "fault tolerance",
             "distributed storage",
             "replication",
-            "CAP theorem"
+            "CAP theorem",
+            "raft",
+            "paxos"
         ],
         exclude_terms=[],
         categories=["cs.DC"]
@@ -265,6 +443,9 @@ DOMAIN_PRESETS: dict[str, DomainPreset] = {
     "cloudnative": DomainPreset(
         key="cloudnative",
         name="云原生",
+        name_en="Cloud Native",
+        query="cloud native OR kubernetes OR container OR docker OR service mesh OR istio OR helm",
+        exclude="",
         description="Cloud Native, Kubernetes, Serverless",
         include_terms=[
             "cloud native",
@@ -272,14 +453,142 @@ DOMAIN_PRESETS: dict[str, DomainPreset] = {
             "serverless",
             "container",
             "infrastructure as code",
-            "GitOps"
+            "GitOps",
+            "istio",
+            "helm"
         ],
         exclude_terms=[],
         categories=["cs.DC", "cs.SE"]
     ),
+    "observability": DomainPreset(
+        key="observability",
+        name="可观测性",
+        name_en="Observability",
+        query="observability OR monitoring OR tracing OR logging OR metrics OR opentelemetry OR prometheus OR grafana",
+        exclude="",
+        description="Observability, Monitoring, Tracing, Logging",
+        include_terms=[
+            "observability",
+            "monitoring",
+            "tracing",
+            "logging",
+            "metrics",
+            "opentelemetry",
+            "prometheus",
+            "grafana"
+        ],
+        exclude_terms=[],
+        categories=["cs.SE", "cs.DC"]
+    ),
+    "security": DomainPreset(
+        key="security",
+        name="安全",
+        name_en="Security",
+        query="security OR authentication OR authorization OR encryption OR zero trust",
+        exclude="image OR video",
+        description="Security, Authentication, Authorization, Encryption",
+        include_terms=[
+            "security",
+            "authentication",
+            "authorization",
+            "encryption",
+            "zero trust",
+            "access control"
+        ],
+        exclude_terms=[
+            "image",
+            "video"
+        ],
+        categories=["cs.CR", "cs.SE"]
+    ),
+    # 金融相关主题
+    "quant": DomainPreset(
+        key="quant",
+        name="量化交易",
+        name_en="Quantitative Trading",
+        query="quantitative trading OR algorithmic trading OR trading strategy OR high-frequency trading OR statistical arbitrage",
+        exclude="image OR video OR speech",
+        description="Quantitative Trading, Algorithmic Trading, Trading Strategy",
+        include_terms=[
+            "quantitative trading",
+            "algorithmic trading",
+            "trading strategy",
+            "high-frequency trading",
+            "statistical arbitrage"
+        ],
+        exclude_terms=[
+            "image",
+            "video",
+            "speech"
+        ],
+        categories=["q-fin.TR", "q-fin.PM", "cs.LG", "stat.ML"]
+    ),
+    "fintech": DomainPreset(
+        key="fintech",
+        name="金融科技",
+        name_en="Financial Technology",
+        query="financial technology OR fintech OR digital finance OR blockchain finance OR decentralized finance",
+        exclude="image OR video",
+        description="Financial Technology, FinTech, Digital Finance, DeFi",
+        include_terms=[
+            "financial technology",
+            "fintech",
+            "digital finance",
+            "blockchain finance",
+            "decentralized finance",
+            "DeFi"
+        ],
+        exclude_terms=[
+            "image",
+            "video"
+        ],
+        categories=["q-fin.TR", "q-fin.GN", "cs.CR", "cs.DC"]
+    ),
+    "fe": DomainPreset(
+        key="fe",
+        name="金融工程",
+        name_en="Financial Engineering",
+        query="financial engineering OR derivatives pricing OR risk management OR portfolio optimization OR credit risk",
+        exclude="image OR video",
+        description="Financial Engineering, Derivatives Pricing, Risk Management",
+        include_terms=[
+            "financial engineering",
+            "derivatives pricing",
+            "risk management",
+            "portfolio optimization",
+            "credit risk",
+            "option pricing"
+        ],
+        exclude_terms=[
+            "image",
+            "video"
+        ],
+        categories=["q-fin.TR", "q-fin.GN", "q-fin.RM", "math.OC"]
+    ),
+    "market_prediction": DomainPreset(
+        key="market_prediction",
+        name="预测市场",
+        name_en="Prediction Markets",
+        query="prediction market OR forecasting platform OR crowd forecasting OR information aggregation OR speculative markets",
+        exclude="",
+        description="Prediction Markets, Forecasting, Information Aggregation",
+        include_terms=[
+            "prediction market",
+            "forecasting platform",
+            "crowd forecasting",
+            "information aggregation",
+            "speculative markets",
+            "prediction markets"
+        ],
+        exclude_terms=[],
+        categories=["q-fin.TR", "q-fin.GN", "econ.GN", "cs.SI"]
+    ),
     "custom": DomainPreset(
         key="custom",
         name="自定义查询",
+        name_en="Custom Query",
+        query="",
+        exclude="",
         description="不使用预设过滤，直接使用原始查询",
         include_terms=[],
         exclude_terms=[],

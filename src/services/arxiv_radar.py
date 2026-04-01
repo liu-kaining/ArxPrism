@@ -4,6 +4,9 @@ arXiv Radar Service
 使用 arxiv 包实现异步论文抓取。
 获取论文元数据，提取 summary 或清洗 HTML 正文。
 实现幂等性检查、速率限制、内容长度校验。
+支持 PDF 下载到本地存储。
+
+防线3: 论文首尾截断算法 - 解决长文本 Token 爆炸和注意力丢失问题
 
 领域预设优化：通过构建精确的 arXiv 搜索查询，提高论文相关性。
 
@@ -15,6 +18,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import arxiv
@@ -26,6 +30,20 @@ from src.database.neo4j_client import neo4j_client
 from src.models.task_models import get_domain_preset, DomainPreset
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# 防线3: 论文首尾截断算法常量
+# =============================================================================
+
+# 最大文本长度（字符数）
+MAX_TEXT_LENGTH = 15000
+# 头部保留长度
+HEAD_LENGTH = 7500
+# 尾部保留长度
+TAIL_LENGTH = 7500
+# 中间省略标记
+MIDDLE_OMISSION = "\n\n...[MIDDLE OMITTED FOR CONTEXT OPTIMIZATION]...\n\n"
 
 
 # =============================================================================
@@ -89,6 +107,7 @@ class PaperContent:
     published_date: str
     text_content: str
     html_url: str
+    pdf_path: Optional[str] = None  # 本地 PDF 路径
 
 
 class ArxivRadar:
@@ -269,6 +288,10 @@ class ArxivRadar:
                 )
                 return None
 
+            # Step 3: 防线3 - 论文首尾截断 (Token 优化)
+            # 如果文本过长，保留头部(Abstract/Introduction)和尾部(Experiments/Conclusion)
+            text_content = self._truncate_text(text_content)
+
             paper_content = PaperContent(
                 arxiv_id=arxiv_id,
                 title=paper.title,
@@ -344,6 +367,114 @@ class ArxivRadar:
         if hasattr(date, "strftime"):
             return date.strftime("%Y-%m-%d")
         return str(date)[:10]
+
+    def _truncate_text(self, text: str) -> str:
+        """
+        论文首尾截断算法 (Lost in the Middle / Cost Saving).
+
+        防线3实现:
+        - 如果文本长度超过 MAX_TEXT_LENGTH (15000字符)
+        - 保留前 HEAD_LENGTH (7500字符) - 涵盖 Abstract 和 Introduction
+        - 保留后 TAIL_LENGTH (7500字符) - 涵盖 Experiments 和 Conclusion
+        - 中间部分替换为省略标记
+
+        这样可以大幅减少 Token 消耗，同时保留最重要的头部和尾部信息。
+
+        Args:
+            text: 原始论文文本
+
+        Returns:
+            截断后的文本
+        """
+        if len(text) <= MAX_TEXT_LENGTH:
+            return text
+
+        head = text[:HEAD_LENGTH]
+        tail = text[-TAIL_LENGTH:]
+
+        logger.info(
+            f"Truncating text: {len(text)} -> {HEAD_LENGTH + len(MIDDLE_OMISSION) + TAIL_LENGTH} chars "
+            f"(head={HEAD_LENGTH}, tail={TAIL_LENGTH})"
+        )
+
+        return head + MIDDLE_OMISSION + tail
+
+
+# =============================================================================
+# PDF 下载功能
+# =============================================================================
+
+    async def download_paper_pdf(self, arxiv_id: str) -> Optional[str]:
+        """
+        下载论文 PDF 到本地存储.
+
+        Args:
+            arxiv_id: arXiv 论文 ID (不含版本号)
+
+        Returns:
+            本地 PDF 文件路径，失败返回 None
+        """
+        pdf_storage_path = Path(settings.pdf_storage_path)
+        pdf_storage_path.mkdir(parents=True, exist_ok=True)
+
+        pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+        pdf_local_path = pdf_storage_path / f"{arxiv_id}.pdf"
+
+        # 已存在则跳过
+        if pdf_local_path.exists():
+            logger.info(f"PDF already exists: {pdf_local_path}")
+            return str(pdf_local_path)
+
+        try:
+            logger.info(f"Downloading PDF: {pdf_url}")
+            async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+                response = await client.get(pdf_url)
+                response.raise_for_status()
+
+                # 写入文件
+                with open(pdf_local_path, "wb") as f:
+                    f.write(response.content)
+
+                file_size = len(response.content)
+                logger.info(f"PDF downloaded successfully: {pdf_local_path} ({file_size} bytes)")
+                return str(pdf_local_path)
+
+        except Exception as e:
+            logger.error(f"Failed to download PDF for {arxiv_id}: {e}")
+            # 清理不完整的文件
+            if pdf_local_path.exists():
+                pdf_local_path.unlink(missing_ok=True)
+            return None
+
+    async def fetch_paper_with_pdf(
+        self,
+        paper: arxiv.Result
+    ) -> Optional[PaperContent]:
+        """
+        获取论文内容并下载 PDF.
+
+        Args:
+            paper: arxiv.Result object
+
+        Returns:
+            PaperContent if successful, None otherwise
+        """
+        arxiv_id = self._normalize_arxiv_id(paper.entry_id)
+
+        # 先获取 HTML 内容
+        content = await self._fetch_paper_html(paper)
+        if content is None:
+            return None
+
+        # 再下载 PDF (串行执行，避免对 arXiv 造成过大压力)
+        try:
+            pdf_path = await self.download_paper_pdf(arxiv_id)
+            content.pdf_path = pdf_path
+        except Exception as e:
+            logger.warning(f"Failed to download PDF for {arxiv_id}: {e}")
+            content.pdf_path = None
+
+        return content
 
 
 # 全局实例

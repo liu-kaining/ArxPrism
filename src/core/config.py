@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     arxiv_rate_limit_delay: float = 3.0  # arXiv 君子协定: 3秒间隔
     arxiv_min_content_length: int = 500  # 最小内容长度阈值
 
+    # PDF 存储配置
+    pdf_storage_path: str = "/data/papers"  # PDF 文件本地存储路径
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Celery 使用 redis_url 作为 broker 和 backend

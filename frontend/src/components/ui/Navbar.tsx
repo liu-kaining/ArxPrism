@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { BookOpen, GitBranch, Home, Network } from "lucide-react";
+import { BookOpen, GitBranch, Home, Network, Sparkles } from "lucide-react";
 
 const navItems = [
   { href: "/", label: "任务管理", icon: Home },
@@ -16,13 +16,18 @@ export default function Navbar() {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-50 w-full border-b bg-background/80 backdrop-blur-xl">
       <div className="container mx-auto px-4">
-        <div className="flex h-14 items-center justify-between">
+        <div className="flex h-16 items-center justify-between">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2">
-            <span className="text-xl">🔮</span>
-            <span className="font-bold text-lg">ArxPrism</span>
+          <Link href="/" className="flex items-center gap-3 group">
+            <div className="relative">
+              <div className="w-9 h-9 rounded-xl bg-gradient-primary flex items-center justify-center transition-transform group-hover:scale-105">
+                <Sparkles className="w-5 h-5 text-white" />
+              </div>
+              <div className="absolute -inset-1 rounded-xl bg-gradient-primary/20 blur-md opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <span className="font-bold text-xl tracking-tight">ArxPrism</span>
           </Link>
 
           {/* Navigation */}
@@ -37,13 +42,16 @@ export default function Navbar() {
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                    "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200",
                     isActive
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                      ? "bg-primary/10 text-primary shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent/80"
                   )}
                 >
-                  <Icon className="w-4 h-4" />
+                  <Icon className={cn(
+                    "w-4 h-4 transition-transform",
+                    isActive ? "scale-110" : "group-hover:scale-105"
+                  )} />
                   {item.label}
                 </Link>
               );

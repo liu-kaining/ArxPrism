@@ -4,11 +4,73 @@ ArxPrism Pydantic 数据契约
 严格按照 PROMPT_ENGINEERING.md 中的定义实现所有 Pydantic V2 模型。
 所有字段都有 Field(description=...) 和合理的默认值。
 
+防线1: Pydantic 垃圾实体拦截器 - 过滤 LLM 幻觉提取的无效实体
+防线2: 使用 Pydantic V2 @field_validator(mode='after')
+
 Reference: PROMPT_ENGINEERING.md Section 2, ARCHITECTURE.md Section 4
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
+import re
+
+
+# =============================================================================
+# 防线1: LLM 幻觉实体黑名单
+# =============================================================================
+
+# 垃圾实体黑名单 - 这些词会被直接过滤掉
+GARBAGE_ENTITY_BLACKLIST = {
+    # SOTA 变体
+    "sota", "state-of-the-art", "state of the art", "sota model", "sota method",
+    # 通用 baseline 变体
+    "baseline", "baselines", "baseline model", "baseline method", "baseline approach",
+    "traditional", "traditional methods", "traditional approach", "traditional model",
+    "previous work", "previous methods", "prior work", "prior methods",
+    # 通用/无意义词
+    "none", "not_mentioned", "not mentioned", "n/a", "na", "null", "nil",
+    "unknown", "various", "many", "several", "some",
+    # 模糊描述
+    "existing", "existing methods", "existing approaches", "existing models",
+    "current", "current methods", "state of the art", "the state of the art",
+    "most", "most methods", "most models", "others", "other methods",
+}
+
+
+def _is_garbage_entity(entity: str) -> bool:
+    """
+    检查实体是否为垃圾实体（LLM 幻觉产物）。
+
+    Args:
+        entity: 待检查的实体名称
+
+    Returns:
+        True 如果是垃圾实体，False 如果是有效实体
+    """
+    if not entity or not isinstance(entity, str):
+        return True
+
+    # 清理并转小写
+    cleaned = entity.strip().lower()
+
+    # 空字符串直接拒绝
+    if not cleaned:
+        return True
+
+    # 直接匹配黑名单
+    if cleaned in GARBAGE_ENTITY_BLACKLIST:
+        return True
+
+    # 检查是否被黑名单词完整包含（避免变体绕过）
+    for banned in GARBAGE_ENTITY_BLACKLIST:
+        if banned in cleaned and len(cleaned) < len(banned) + 5:
+            return True
+
+    # 纯数字或符号
+    if re.match(r'^[\d\-\_\.\/\:]+$', cleaned):
+        return True
+
+    return False
 
 
 class ProposedMethod(BaseModel):
@@ -25,7 +87,10 @@ class ProposedMethod(BaseModel):
 
 
 class KnowledgeGraphNodes(BaseModel):
-    """知识图谱节点实体 (用于构建 Neo4j Nodes)."""
+    """知识图谱节点实体 (用于构建 Neo4j Nodes).
+
+    防线1实现: 使用 @field_validator(mode='after') 过滤 LLM 幻觉实体。
+    """
 
     baselines_beaten: List[str] = Field(
         default_factory=list,
@@ -39,6 +104,61 @@ class KnowledgeGraphNodes(BaseModel):
         default_factory=list,
         description="核心提升的指标名称及幅度列表"
     )
+
+    @field_validator('baselines_beaten', 'datasets_used', 'metrics_improved', mode='after')
+    @classmethod
+    def _filter_garbage_entities(cls, v: List[str]) -> List[str]:
+        """
+        Pydantic V2 字段验证器: 过滤 LLM 幻觉产生的垃圾实体。
+
+        黑名单包含: "sota", "state-of-the-art", "previous work",
+        "traditional methods", "baseline", "none", "not_mentioned" 等变体。
+
+        Args:
+            v: LLM 返回的原始列表
+
+        Returns:
+            清洗后的干净列表
+        """
+        if not isinstance(v, list):
+            return []
+
+        cleaned = []
+        for item in v:
+            if not isinstance(item, str):
+                continue
+
+            # 清理空格
+            item = item.strip()
+
+            # 跳过空字符串
+            if not item:
+                continue
+
+            # 跳过垃圾实体
+            if _is_garbage_entity(item):
+                continue
+
+            # 跳过太短的（通常是误识别）
+            if len(item) < 2:
+                continue
+
+            # 跳过太长的（可能是整句误识别）
+            if len(item) > 200:
+                continue
+
+            cleaned.append(item)
+
+        # 去重（保持顺序）
+        seen = set()
+        result = []
+        for item in cleaned:
+            lower_item = item.lower()
+            if lower_item not in seen:
+                seen.add(lower_item)
+                result.append(item)
+
+        return result
 
 
 class CriticalAnalysis(BaseModel):

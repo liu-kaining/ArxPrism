@@ -4,11 +4,15 @@ Neo4j Database Client
 使用 neo4j.AsyncGraphDatabase 实现异步图数据库客户端。
 所有写入操作必须使用 MERGE 语句保证幂等性，必须使用参数化查询防注入。
 
+防线2: 实体归一化算法 - 解决 Deep-Log / DeepLog / deeplog 节点对齐问题
+防线4: DAG 环路防范 - [:IMPROVES_UPON] 边写入 published_date
+
 Reference: ARCHITECTURE.md Section 3, TECH_DESIGN.md Section 1,
 CODE_REVIEW.md Section 1
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
@@ -20,12 +24,64 @@ from src.models.schemas import PaperExtractionResponse
 logger = logging.getLogger(__name__)
 
 
-def _normalize_name(name: str) -> str:
-    """归一化实体名称: 转小写并去除首尾空格.
+# =============================================================================
+# 防线2: 极进实体归一化算法
+# =============================================================================
 
-    这是防止 "DeepLog" 和 "deeplog" 被当作不同节点的关键措施。
+# 无意义的常见后缀词（这些词会干扰实体对齐）
+_ENTITY_SUFFIX_PATTERNS = [
+    r'\s+model$',
+    r'\s+framework$',
+    r'\s+algorithm$',
+    r'\s+approach$',
+    r'\s+method$',
+    r'\s+technique$',
+    r'\s+system$',
+    r'\s+network$',
+    r'\s+architecture$',
+    r'\s+scheme$',
+    r'\s+protocol$',
+    r'\s+strategy$',
+    r'\s+optimization$',
+    r'\s+learning$',
+]
+
+
+def _normalize_name(name: str) -> str:
     """
-    return name.strip().lower()
+    归一化实体名称: 用于 Neo4j MERGE 的唯一合并键。
+
+    防线2实现:
+    1. 转小写 + 去首尾空格
+    2. 去除常见无意义后缀 (model, framework, algorithm, approach, method 等)
+    3. 剔除所有非字母和数字的特殊字符
+
+    Example:
+        "Deep-Log Model" -> "deeplog" (去后缀model，去连字符)
+        "DeepLog model" -> "deeplog" (去后缀model)
+        "DeepLog-model" -> "deeplogmodel" (无后缀，去连字符)
+        "LSTM-N" -> "lstmn" (去连字符)
+
+    Returns:
+        归一化后的名称（全小写、无特殊字符）作为 MERGE 键
+    """
+    if not name or not isinstance(name, str):
+        return ""
+
+    # Step 1: 转小写 + 去首尾空格
+    normalized = name.strip().lower()
+
+    if not normalized:
+        return ""
+
+    # Step 2: 去除常见无意义后缀
+    for pattern in _ENTITY_SUFFIX_PATTERNS:
+        normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+
+    # Step 3: 剔除所有非字母和数字的特殊字符
+    normalized = re.sub(r'[^a-z0-9]', '', normalized)
+
+    return normalized
 
 
 class Neo4jClient:
@@ -78,6 +134,8 @@ class Neo4jClient:
 
         使用 MERGE 语句保证幂等性，所有查询使用参数化查询防注入。
 
+        防线4: [:IMPROVES_UPON] 边写入 published_date 用于环路检测
+
         Args:
             data: 经过 Pydantic 校验的 PaperExtractionResponse
 
@@ -110,9 +168,12 @@ class Neo4jClient:
         在事务中执行论文图谱写入.
 
         使用 MERGE (禁止 CREATE) + 参数化查询 + 名称归一化。
+        防线2: 所有 MERGE 使用 _normalize_name() 处理后的名称
+        防线4: [:IMPROVES_UPON] 边写入 published_date
         """
         paper_id = data.paper_id
         extraction = data.extraction_data
+        published_date = data.publication_date
 
         # =========================================================================
         # 1. MERGE Paper 节点 (按 arxiv_id 唯一合并)
@@ -134,7 +195,7 @@ class Neo4jClient:
             """,
             arxiv_id=paper_id,
             title=data.title,
-            published_date=data.publication_date,
+            published_date=published_date,
             url=f"https://arxiv.org/abs/{paper_id}",
             core_problem=extraction.core_problem
         )
@@ -163,48 +224,77 @@ class Neo4jClient:
         # 3. MERGE Method 节点和 PROPOSES 关系
         # =========================================================================
         method_name = extraction.proposed_method.name
+        normalized_method = None  # 初始化，避免未定义
+
         if method_name and method_name != "NOT_MENTIONED":
             normalized_method = _normalize_name(method_name)
-            logger.debug(f"MERGing Method: {method_name} -> normalized: {normalized_method}")
-            await tx.run(
-                """
-                MERGE (m:Method {name: $name})
-                ON CREATE SET m.description = $description, m.original_name = $original_name
-                ON MATCH SET m.description = $description, m.original_name = $original_name
-                WITH m
-                MATCH (p:Paper {arxiv_id: $arxiv_id})
-                MERGE (p)-[:PROPOSES]->(m)
-                """,
-                name=normalized_method,
-                original_name=method_name,
-                description=extraction.proposed_method.description,
-                arxiv_id=paper_id
-            )
 
-            # =========================================================================
-            # 4. MERGE baselines_beaten -> Method 节点和 [:IMPROVES_UPON] 关系 (核心边)
-            # FIX: 必须先 MERGE improved (当前方法)，再创建关系，否则如果 improved 尚不存在会失败
-            # =========================================================================
-            for baseline_name in extraction.knowledge_graph_nodes.baselines_beaten:
-                normalized_baseline = _normalize_name(baseline_name)
-                logger.debug(f"MERGing IMPROVES_UPON: {method_name} -> {baseline_name}")
+            # 跳过空归一化结果
+            if not normalized_method:
+                logger.warning(f"Skipping empty normalized method name: {method_name}")
+            else:
+                logger.debug(f"MERGing Method: {method_name} -> normalized: {normalized_method}")
                 await tx.run(
                     """
-                    MERGE (improved:Method {name: $method_name})
-                    MERGE (baseline:Method {name: $baseline_name})
-                    ON CREATE SET baseline.original_name = $baseline_original_name
-                    MERGE (improved)-[:IMPROVES_UPON]->(baseline)
+                    MERGE (m:Method {name: $name})
+                    ON CREATE SET m.description = $description, m.original_name = $original_name
+                    ON MATCH SET m.description = $description, m.original_name = $original_name
+                    WITH m
+                    MATCH (p:Paper {arxiv_id: $arxiv_id})
+                    MERGE (p)-[:PROPOSES]->(m)
                     """,
-                    method_name=normalized_method,
-                    baseline_name=normalized_baseline,
-                    baseline_original_name=baseline_name
+                    name=normalized_method,
+                    original_name=method_name,
+                    description=extraction.proposed_method.description,
+                    arxiv_id=paper_id
                 )
+
+                # =========================================================================
+                # 4. MERGE baselines_beaten -> Method 节点和 [:IMPROVES_UPON] 关系 (核心边)
+                #
+                # 防线2: 使用 _normalize_name() 归一化后的名称作为 MERGE 键
+                # 防线4: 写入 published_date 到边属性，防止环路
+                # =========================================================================
+                for baseline_name in extraction.knowledge_graph_nodes.baselines_beaten:
+                    normalized_baseline = _normalize_name(baseline_name)
+
+                    # 跳过空归一化结果
+                    if not normalized_baseline:
+                        logger.warning(f"Skipping empty normalized baseline: {baseline_name}")
+                        continue
+
+                    logger.debug(f"MERGing IMPROVES_UPON: {method_name} -> {baseline_name} (normalized: {normalized_baseline})")
+                    await tx.run(
+                        """
+                        MERGE (improved:Method {name: $method_name})
+                        MERGE (baseline:Method {name: $baseline_name})
+                        ON CREATE SET
+                            baseline.original_name = $baseline_original_name,
+                            baseline.first_appeared = $published_date
+                        ON MATCH SET
+                            baseline.original_name = $baseline_original_name
+                        WITH improved, baseline
+                        MATCH (paper:Paper {arxiv_id: $arxiv_id})
+                        MERGE (improved)-[r:IMPROVES_UPON]->(baseline)
+                        SET r.discovered_at = $published_date
+                        """,
+                        method_name=normalized_method,
+                        baseline_name=normalized_baseline,
+                        baseline_original_name=baseline_name,
+                        published_date=published_date,
+                        arxiv_id=paper_id
+                    )
 
         # =========================================================================
         # 5. MERGE Dataset 节点和 EVALUATED_ON 关系
         # =========================================================================
         for dataset_name in extraction.knowledge_graph_nodes.datasets_used:
             normalized_dataset = _normalize_name(dataset_name)
+
+            if not normalized_dataset:
+                logger.warning(f"Skipping empty normalized dataset: {dataset_name}")
+                continue
+
             logger.debug(f"MERGing Dataset: {dataset_name} -> normalized: {normalized_dataset}")
             await tx.run(
                 """
@@ -225,6 +315,11 @@ class Neo4jClient:
         # =========================================================================
         for metric_name in extraction.knowledge_graph_nodes.metrics_improved:
             normalized_metric = _normalize_name(metric_name)
+
+            if not normalized_metric:
+                logger.warning(f"Skipping empty normalized metric: {metric_name}")
+                continue
+
             logger.debug(f"MERGing Metric: {metric_name} -> normalized: {normalized_metric}")
             await tx.run(
                 """
@@ -245,6 +340,11 @@ class Neo4jClient:
         # =========================================================================
         for innovation_content in extraction.critical_analysis.key_innovations:
             normalized_content = _normalize_name(innovation_content)
+
+            if not normalized_content:
+                logger.warning(f"Skipping empty normalized innovation: {innovation_content}")
+                continue
+
             logger.debug(f"MERGing Innovation: {innovation_content[:50]}...")
             await tx.run(
                 """
@@ -265,6 +365,11 @@ class Neo4jClient:
         # =========================================================================
         for limitation_content in extraction.critical_analysis.limitations:
             normalized_content = _normalize_name(limitation_content)
+
+            if not normalized_content:
+                logger.warning(f"Skipping empty normalized limitation: {limitation_content}")
+                continue
+
             logger.debug(f"MERGing Limitation: {limitation_content[:50]}...")
             await tx.run(
                 """
@@ -483,7 +588,7 @@ class Neo4jClient:
 
     async def search_papers(self, query: str = "", limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
         """
-        按主题/关键词检索已入库论文（用于“查 SRE 主题”这条主路径）。
+        按主题/关键词检索已入库论文（用于"查 SRE 主题"这条主路径）。
 
         匹配字段：
         - Paper.title
