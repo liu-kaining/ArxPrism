@@ -193,9 +193,9 @@ export default function PaperDetailPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {paper.innovations?.length > 0 ? (
+                {(paper.innovations ?? []).length > 0 ? (
                   <ul className="space-y-3">
-                    {paper.innovations.map((item, i) => (
+                    {(paper.innovations ?? []).map((item, i) => (
                       <li key={i} className="flex items-start gap-3">
                         <div className="w-2 h-2 rounded-full bg-green-500 mt-2 shrink-0" />
                         <span className="text-sm leading-relaxed">{item}</span>
@@ -219,9 +219,9 @@ export default function PaperDetailPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {paper.limitations?.length > 0 ? (
+                {(paper.limitations ?? []).length > 0 ? (
                   <ul className="space-y-3">
-                    {paper.limitations.map((item, i) => (
+                    {(paper.limitations ?? []).map((item, i) => (
                       <li key={i} className="flex items-start gap-3">
                         <div className="w-2 h-2 rounded-full bg-orange-500 mt-2 shrink-0" />
                         <span className="text-sm leading-relaxed">{item}</span>
@@ -247,14 +247,14 @@ export default function PaperDetailPage() {
             </CardHeader>
             <CardContent className="space-y-5">
               {/* Baselines */}
-              {paper.baselines?.length > 0 && (
+              {(paper.baselines ?? []).length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-muted-foreground" />
                     击败的基线方法
                   </h4>
                   <div className="flex flex-wrap gap-2">
-                    {paper.baselines.map((baseline) => (
+                    {(paper.baselines ?? []).map((baseline) => (
                       <span
                         key={baseline}
                         className="px-3 py-1.5 rounded-full bg-secondary text-sm"
@@ -267,14 +267,14 @@ export default function PaperDetailPage() {
               )}
 
               {/* Datasets */}
-              {paper.datasets?.length > 0 && (
+              {(paper.datasets ?? []).length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
                     <Database className="w-4 h-4 text-muted-foreground" />
                     使用的数据集
                   </h4>
                   <div className="flex flex-wrap gap-2">
-                    {paper.datasets.map((dataset) => (
+                    {(paper.datasets ?? []).map((dataset) => (
                       <span
                         key={dataset}
                         className="px-3 py-1.5 rounded-full bg-accent text-sm"
@@ -287,11 +287,11 @@ export default function PaperDetailPage() {
               )}
 
               {/* Metrics */}
-              {paper.metrics?.length > 0 && (
+              {(paper.metrics ?? []).length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium mb-3">评估指标</h4>
                   <div className="flex flex-wrap gap-2">
-                    {paper.metrics.map((metric) => (
+                    {(paper.metrics ?? []).map((metric) => (
                       <span
                         key={metric}
                         className="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-sm font-semibold"
@@ -303,7 +303,9 @@ export default function PaperDetailPage() {
                 </div>
               )}
 
-              {!paper.baselines?.length && !paper.datasets?.length && !paper.metrics?.length && (
+              {!(paper.baselines ?? []).length &&
+                !(paper.datasets ?? []).length &&
+                !(paper.metrics ?? []).length && (
                 <p className="text-muted-foreground">暂无实验数据</p>
               )}
             </CardContent>

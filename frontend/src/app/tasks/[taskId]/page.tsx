@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useTaskStore } from "@/lib/stores/taskStore";
@@ -14,35 +14,29 @@ import {
   Pause,
   X,
   RotateCcw,
-  CheckCircle2,
-  XCircle,
   AlertCircle,
-  Clock,
-  ExternalLink,
   BookOpen,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
+import { paperResultStatusUi, taskStatusUi } from "@/lib/task-status";
 import toast from "react-hot-toast";
-
-const statusConfig = {
-  pending: { icon: Clock, color: "text-yellow-500", label: "等待中" },
-  running: { icon: Play, color: "text-blue-500", label: "运行中" },
-  paused: { icon: Pause, color: "text-orange-500", label: "已暂停" },
-  completed: { icon: CheckCircle2, color: "text-green-500", label: "已完成" },
-  failed: { icon: XCircle, color: "text-red-500", label: "失败" },
-  cancelled: { icon: X, color: "text-gray-500", label: "已取消" },
-};
 
 export default function TaskDetailPage() {
   const params = useParams();
   const taskId = params.taskId as string;
 
-  const { currentTask, fetchTask, pauseTask, resumeTask, cancelTask, retryTask, isLoading } =
-    useTaskStore();
+  const {
+    currentTask,
+    fetchTask,
+    pauseTask,
+    resumeTask,
+    cancelTask,
+    retryTask,
+    taskDetailLoading,
+  } = useTaskStore();
 
   useEffect(() => {
-    fetchTask(taskId);
-    // 轮询更新
+    fetchTask(taskId, { focusDetail: true });
     const interval = setInterval(() => {
       if (currentTask?.status === "running" || currentTask?.status === "pending") {
         fetchTask(taskId);
@@ -88,7 +82,7 @@ export default function TaskDetailPage() {
     }
   };
 
-  if (isLoading && !currentTask) {
+  if (taskDetailLoading && !currentTask) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-12 w-64" />
@@ -109,7 +103,7 @@ export default function TaskDetailPage() {
   }
 
   const task = currentTask;
-  const status = statusConfig[task.status] || statusConfig.pending;
+  const status = taskStatusUi[task.status];
   const StatusIcon = status.icon;
 
   return (
@@ -232,14 +226,8 @@ export default function TaskDetailPage() {
         <CardContent>
           {task.results.length > 0 ? (
             <div className="space-y-3">
-              {task.results.map((result, index) => {
-                const resultStatus = {
-                  success: { icon: CheckCircle2, color: "text-green-500" },
-                  skipped: { icon: AlertCircle, color: "text-yellow-500" },
-                  failed: { icon: XCircle, color: "text-red-500" },
-                  pending: { icon: Clock, color: "text-gray-500" },
-                  processing: { icon: Play, color: "text-blue-500" },
-                }[result.status] || { icon: Clock, color: "text-gray-500" };
+              {task.results.map((result) => {
+                const resultStatus = paperResultStatusUi[result.status];
 
                 const ResultIcon = resultStatus.icon;
 

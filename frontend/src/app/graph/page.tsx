@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { paperApi } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
@@ -25,7 +25,7 @@ interface GraphRelationship {
   properties: Record<string, any>;
 }
 
-export default function GraphPage() {
+function GraphPageContent() {
   const searchParams = useSearchParams();
   const paperId = searchParams.get("paper");
 
@@ -260,5 +260,21 @@ export default function GraphPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+export default function GraphPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-6">
+          <Skeleton className="h-10 w-64" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-96 w-full rounded-xl" />
+        </div>
+      }
+    >
+      <GraphPageContent />
+    </Suspense>
   );
 }

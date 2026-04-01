@@ -12,12 +12,10 @@ import {
   X,
   RotateCcw,
   ExternalLink,
-  CheckCircle2,
-  XCircle,
   AlertCircle,
-  Clock,
 } from "lucide-react";
 import { formatDateTime, truncate } from "@/lib/utils";
+import { taskStatusUi } from "@/lib/task-status";
 import toast from "react-hot-toast";
 
 interface TaskProgressCardProps {
@@ -25,20 +23,11 @@ interface TaskProgressCardProps {
   compact?: boolean;
 }
 
-const statusConfig = {
-  pending: { icon: Clock, color: "text-yellow-500", label: "等待中" },
-  running: { icon: Play, color: "text-blue-500", label: "运行中" },
-  paused: { icon: Pause, color: "text-orange-500", label: "已暂停" },
-  completed: { icon: CheckCircle2, color: "text-green-500", label: "已完成" },
-  failed: { icon: XCircle, color: "text-red-500", label: "失败" },
-  cancelled: { icon: X, color: "text-gray-500", label: "已取消" },
-};
-
 export default function TaskProgressCard({ task, compact = false }: TaskProgressCardProps) {
   const { fetchTask, pauseTask, resumeTask, cancelTask, retryTask } = useTaskStore();
   const [isPolling, setIsPolling] = useState(false);
 
-  const status = statusConfig[task.status] || statusConfig.pending;
+  const status = taskStatusUi[task.status];
   const StatusIcon = status.icon;
   const progress = task.progress.percentage || 0;
 

@@ -208,8 +208,19 @@ async def search_papers(
     - query 非空：在 title/core_problem/method 中做 contains 匹配
     """
     try:
+        total = await neo4j_client.count_search_papers(query=query)
         rows = await neo4j_client.search_papers(query=query, limit=limit, offset=offset)
-        return APIResponse(code=200, message="success", data={"query": query, "limit": limit, "offset": offset, "papers": rows})
+        return APIResponse(
+            code=200,
+            message="success",
+            data={
+                "query": query,
+                "limit": limit,
+                "offset": offset,
+                "total": total,
+                "papers": rows,
+            },
+        )
     except Exception as e:
         logger.error(f"Failed to search papers: {e}")
         raise HTTPException(status_code=500, detail=f"Paper search failed: {str(e)}")

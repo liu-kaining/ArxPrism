@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { evolutionApi } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
@@ -21,7 +21,7 @@ interface EvolutionLink {
   target: string;
 }
 
-export default function EvolutionPage() {
+function EvolutionPageContent() {
   const searchParams = useSearchParams();
   const initialMethod = searchParams.get("method") || "";
 
@@ -210,5 +210,21 @@ export default function EvolutionPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+export default function EvolutionPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-6">
+          <Skeleton className="h-10 w-72" />
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-64 w-full rounded-xl" />
+        </div>
+      }
+    >
+      <EvolutionPageContent />
+    </Suspense>
   );
 }

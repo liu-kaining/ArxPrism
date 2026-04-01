@@ -2,8 +2,6 @@
 # ArxPrism Docker Compose - Full Containerized Microservices
 # =============================================================================
 
-version: "3.8"
-
 services:
   # ===========================================================================
   # Neo4j Graph Database
@@ -133,16 +131,22 @@ services:
 
   # ===========================================================================
   # Next.js Frontend Service
+  # Dockerfile.frontend expects repo root as context (COPY frontend/...)
   # ===========================================================================
   frontend:
     build:
-      context: ./frontend
-      dockerfile: ../Dockerfile.frontend
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        # Default: AWS Public ECR copy of official node (avoids broken/expired CN Hub mirrors, e.g. 163 / USTC).
+        # To use Docker Hub directly: fix/remove registry-mirrors in Docker Engine, then set NODE_IMAGE=node:20-alpine in .env
+        NODE_IMAGE: ${NODE_IMAGE:-public.ecr.aws/docker/library/node:20-alpine}
     container_name: arxprism-frontend
     ports:
       - "3000:3000"  # Next.js
     environment:
-      - NEXT_PUBLIC_API_URL=http://api:8000
+      # Browser must reach the API on the host (not the Docker service name).
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NODE_ENV=production
       - APP_ENV=production
     depends_on:

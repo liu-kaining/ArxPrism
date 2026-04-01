@@ -1,12 +1,16 @@
 # ArxPrism Frontend Dockerfile
-FROM node:20-alpine AS base
+# docker-compose.yml defaults NODE_IMAGE to public.ecr.aws/... (bypasses expired CN Docker Hub mirrors).
+# Override: NODE_IMAGE=node:20-alpine in .env after fixing Docker Engine registry-mirrors.
+ARG NODE_IMAGE=node:20-alpine
+FROM ${NODE_IMAGE} AS base
 
 # Install dependencies only when needed
 FROM base AS deps
 WORKDIR /app
 
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
+COPY frontend/package.json ./
+# No package-lock.json in repo; npm install is reproducible enough for local/dev images
+RUN npm install
 
 # Development image
 FROM base AS development
@@ -23,6 +27,8 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ ./
+# Next standalone + production COPY expect /app/public to exist (repo may omit empty public/)
+RUN mkdir -p public
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

@@ -628,6 +628,29 @@ class Neo4jClient:
             logger.error(f"Failed to search papers: {e}")
             return []
 
+    async def count_search_papers(self, query: str = "") -> int:
+        """与 search_papers 相同过滤条件，返回命中论文总数（分页用）。"""
+        q = (query or "").strip().lower()
+        if self._driver is None:
+            await self.connect()
+        cypher = """
+        MATCH (p:Paper)
+        OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
+        WITH p, collect(DISTINCT coalesce(m.original_name, m.name)) AS methods
+        WHERE $q = "" OR toLower(coalesce(p.title,"")) CONTAINS $q
+           OR toLower(coalesce(p.core_problem,"")) CONTAINS $q
+           OR any(x IN methods WHERE toLower(coalesce(x,"")) CONTAINS $q)
+        RETURN count(DISTINCT p) AS total
+        """
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(cypher, q=q)
+                row = await result.single()
+                return int(row["total"]) if row else 0
+        except Exception as e:
+            logger.error(f"Failed to count search papers: {e}")
+            return 0
+
     async def get_paper_by_id(self, arxiv_id: str) -> Optional[Dict[str, Any]]:
         """
         根据 arXiv ID 获取论文详情.

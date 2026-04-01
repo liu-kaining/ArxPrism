@@ -47,8 +47,5 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Frontend build artifacts (we rebuild in Docker)
-frontend/src/app/*.css
-frontend/src/components/
-frontend/src/lib/
-frontend/src/styles/
+# Frontend: keep full src/ — Next.js needs components, lib, and CSS for `next build`.
+# Only exclude installed deps and .next (listed above under frontend/).
