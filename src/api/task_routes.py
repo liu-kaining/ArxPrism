@@ -62,6 +62,7 @@ async def create_task(request: TaskCreateRequest) -> APIResponse:
     创建新任务.
 
     创建任务后会立即返回 task_id，任务在后台异步执行。
+    如果 Celery/Redis 可用，任务会发送到 Worker；否则在当前进程执行。
 
     Payload:
         - query: arXiv 搜索查询
@@ -84,17 +85,31 @@ async def create_task(request: TaskCreateRequest) -> APIResponse:
             max_results=request.max_results
         )
 
-        # 触发后台任务执行
-        from src.worker.tasks import execute_task_pipeline_async
+        # 触发后台任务执行 - 优先使用 Celery Worker
+        from src.worker.tasks import get_celery_app, run_task_pipeline_task, execute_task_pipeline_async
         import asyncio
-        asyncio.create_task(
-            execute_task_pipeline_async(
+
+        celery_app = get_celery_app()
+        if celery_app is not None:
+            # Celery 可用：发送到 Worker
+            run_task_pipeline_task.delay(
                 task_id=task.task_id,
                 query=request.query,
                 domain_preset=request.domain_preset,
                 max_results=request.max_results
             )
-        )
+            logger.info(f"Task {task.task_id} dispatched to Celery worker")
+        else:
+            # Celery 不可用：在当前进程执行
+            asyncio.create_task(
+                execute_task_pipeline_async(
+                    task_id=task.task_id,
+                    query=request.query,
+                    domain_preset=request.domain_preset,
+                    max_results=request.max_results
+                )
+            )
+            logger.info(f"Task {task.task_id} started in-process (no Celery)")
 
         return APIResponse(
             code=201,
@@ -339,7 +354,8 @@ async def retry_task(task_id: str) -> APIResponse:
     """
     重试失败的任务.
 
-    仅已失败的任务可以重试。重试会创建新任务。
+    仅已失败的任务可以重试。重试会创建新任务并启动执行。
+    如果 Celery/Redis 可用，任务会发送到 Worker；否则在当前进程执行。
 
     Path Parameters:
         - task_id: 任务 ID
@@ -368,6 +384,32 @@ async def retry_task(task_id: str) -> APIResponse:
             domain_preset=task.domain_preset,
             max_results=task.max_results
         )
+
+        # 触发后台任务执行 - 优先使用 Celery Worker
+        from src.worker.tasks import get_celery_app, run_task_pipeline_task, execute_task_pipeline_async
+        import asyncio
+
+        celery_app = get_celery_app()
+        if celery_app is not None:
+            # Celery 可用：发送到 Worker
+            run_task_pipeline_task.delay(
+                task_id=new_task.task_id,
+                query=task.query,
+                domain_preset=task.domain_preset,
+                max_results=task.max_results
+            )
+            logger.info(f"Retry task {new_task.task_id} dispatched to Celery worker")
+        else:
+            # Celery 不可用：在当前进程执行
+            asyncio.create_task(
+                execute_task_pipeline_async(
+                    task_id=new_task.task_id,
+                    query=task.query,
+                    domain_preset=task.domain_preset,
+                    max_results=task.max_results
+                )
+            )
+            logger.info(f"Retry task {new_task.task_id} started in-process (no Celery)")
 
         return APIResponse(
             code=200,

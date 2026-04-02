@@ -318,34 +318,43 @@ class ArxivRadar:
 
         移除:
         - style, script, nav, footer, header 标签及其内容
+        - 参考文献部分（避免 LLM 幻觉）
         - Base64 图片
         - meta 标签
         - 过多空白字符
+
+        修复: 不再只提取 abstract，而是提取整个正文内容。
 
         Reference: ARCHITECTURE.md Section 2
         """
         soup = BeautifulSoup(html, "html.parser")
 
-        # Remove unwanted tags
+        # Step 1: 移除无用标签
         for tag in soup.find_all(["style", "script", "nav", "footer", "header"]):
             tag.decompose()
 
-        # Remove Base64 images
+        # Step 2: 移除参考文献部分（避免 LLM 产生幻觉）
+        # arXiv HTML 的参考文献通常在 class 包含 "bibliography" 或 "references" 的元素中
+        for elem in soup.find_all(class_=re.compile(r"(bibliography|references)", re.IGNORECASE)):
+            elem.decompose()
+
+        # 也检查 id 属性
+        for elem in soup.find_all(id=re.compile(r"(bibliography|references)", re.IGNORECASE)):
+            elem.decompose()
+
+        # Step 3: 移除 Base64 图片
         for img in soup.find_all("img"):
             if img.get("src", "").startswith("data:"):
                 img.decompose()
 
-        # Try to find main content - arXiv typically has abstract in .abstract
-        abstract = soup.find("div", class_="abstract")
-        if abstract:
-            text = abstract.get_text(separator=" ", strip=True)
-        else:
-            # Fallback: full body text
-            for meta in soup.find_all("meta"):
-                meta.decompose()
-            text = soup.get_text(separator=" ", strip=True)
+        # Step 4: 移除 meta 标签
+        for meta in soup.find_all("meta"):
+            meta.decompose()
 
-        # Clean up whitespace
+        # Step 5: 提取全部正文文本（不再只提取 abstract）
+        text = soup.get_text(separator=" ", strip=True)
+
+        # Step 6: 清理多余空白
         text = re.sub(r"\s+", " ", text)
         text = text.strip()
 

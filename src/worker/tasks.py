@@ -178,7 +178,8 @@ async def _process_paper_async(
             authors=paper_content["authors"],
             published_date=paper_content["published_date"],
             text_content=paper_content["text_content"],
-            html_url=paper_content["html_url"]
+            html_url=paper_content["html_url"],
+            pdf_path=paper_content.get("pdf_path"),  # 可选字段
         )
 
         # Step 2: 调用 LLM 萃取 (异步)
@@ -547,3 +548,41 @@ async def execute_task_pipeline_async(
         max_results: 最大论文数
     """
     await _execute_task_pipeline(task_id, query, domain_preset, max_results)
+
+
+# =============================================================================
+# Celery 任务包装器 (用于后台 Worker)
+# =============================================================================
+
+@celery.task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="run_task_pipeline_task",
+)
+def run_task_pipeline_task(
+    self,
+    task_id: str,
+    query: str,
+    domain_preset: str,
+    max_results: int
+) -> dict:
+    """
+    Celery Task: 在后台 Worker 中执行完整任务流水线.
+
+    Args:
+        task_id: 任务 ID
+        query: arXiv 搜索查询
+        domain_preset: 领域预设
+        max_results: 最大论文数
+
+    Returns:
+        Dict with status
+    """
+    try:
+        logger.info(f"Celery task started: task_id={task_id}")
+        _run_async(execute_task_pipeline_async(task_id, query, domain_preset, max_results))
+        return {"status": "completed", "task_id": task_id}
+    except Exception as e:
+        logger.error(f"Celery task failed: task_id={task_id}, error={e}")
+        raise self.retry(exc=e)

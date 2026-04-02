@@ -273,16 +273,13 @@ class Neo4jClient:
                             baseline.first_appeared = $published_date
                         ON MATCH SET
                             baseline.original_name = $baseline_original_name
-                        WITH improved, baseline
-                        MATCH (paper:Paper {arxiv_id: $arxiv_id})
                         MERGE (improved)-[r:IMPROVES_UPON]->(baseline)
                         SET r.discovered_at = $published_date
                         """,
                         method_name=normalized_method,
                         baseline_name=normalized_baseline,
                         baseline_original_name=baseline_name,
-                        published_date=published_date,
-                        arxiv_id=paper_id
+                        published_date=published_date
                     )
 
         # =========================================================================
@@ -604,7 +601,16 @@ class Neo4jClient:
         cypher = """
         MATCH (p:Paper)
         OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
-        WITH p, collect(DISTINCT coalesce(m.original_name, m.name)) AS methods
+        OPTIONAL MATCH (p)-[:WRITTEN_BY]->(a:Author)
+        OPTIONAL MATCH (p)-[:EVALUATED_ON]->(d:Dataset)
+        OPTIONAL MATCH (p)-[:MEASURES]->(mt:Metric)
+        OPTIONAL MATCH (m)-[:IMPROVES_UPON]->(baseline:Method)
+        WITH p,
+             collect(DISTINCT coalesce(m.original_name, m.name)) AS methods,
+             collect(DISTINCT coalesce(a.original_name, a.name)) AS authors,
+             collect(DISTINCT coalesce(d.original_name, d.name)) AS datasets,
+             collect(DISTINCT coalesce(mt.original_name, mt.name)) AS metrics,
+             collect(DISTINCT coalesce(baseline.original_name, baseline.name)) AS baselines
         WHERE $q = "" OR toLower(coalesce(p.title,"")) CONTAINS $q
            OR toLower(coalesce(p.core_problem,"")) CONTAINS $q
            OR any(x IN methods WHERE toLower(coalesce(x,"")) CONTAINS $q)
@@ -613,7 +619,11 @@ class Neo4jClient:
           p.title AS title,
           p.published_date AS published_date,
           p.core_problem AS core_problem,
-          methods AS methods
+          methods[0] AS proposed_method,
+          authors AS authors,
+          datasets AS datasets,
+          metrics AS metrics,
+          baselines AS baselines
         ORDER BY p.published_date DESC
         SKIP $offset
         LIMIT $limit
@@ -667,12 +677,11 @@ class Neo4jClient:
         cypher = """
         MATCH (p:Paper {arxiv_id: $arxiv_id})
         OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
-        OPTIONAL MATCH (p)-[:INNOVATES]->(i:Innovation)
+        OPTIONAL MATCH (p)-[:HAS_INNOVATION]->(i:Innovation)
         OPTIONAL MATCH (p)-[:HAS_LIMITATION]->(l:Limitation)
-        OPTIONAL MATCH (p)-[:OUTPERFORMS]->(b:Method)
-        OPTIONAL MATCH (p)-[:USES_DATASET]->(d:Dataset)
-        OPTIONAL MATCH (p)-[:PROPOSES]->(m2:Method)-[:USES_DATASET]->(m2d:Dataset)
-        OPTIONAL MATCH (p)-[:PROPOSES]->(m3:Method)-[:EVALUATES_USING]->(mt:Metric)
+        OPTIONAL MATCH (p)-[:EVALUATED_ON]->(d:Dataset)
+        OPTIONAL MATCH (p)-[:MEASURES]->(mt:Metric)
+        OPTIONAL MATCH (m)-[:IMPROVES_UPON]->(baseline:Method)
 
         RETURN
           p.arxiv_id AS arxiv_id,
@@ -684,11 +693,11 @@ class Neo4jClient:
             name: coalesce(m.original_name, m.name),
             description: m.description
           }) AS methods,
-          collect(DISTINCT i.content) AS innovations,
-          collect(DISTINCT l.content) AS limitations,
-          collect(DISTINCT coalesce(b.original_name, b.name)) AS baselines,
-          collect(DISTINCT d.name) AS datasets,
-          collect(DISTINCT mt.name) AS metrics
+          collect(DISTINCT coalesce(i.original_content, i.content)) AS innovations,
+          collect(DISTINCT coalesce(l.original_content, l.content)) AS limitations,
+          collect(DISTINCT coalesce(baseline.original_name, baseline.name)) AS baselines,
+          collect(DISTINCT coalesce(d.original_name, d.name)) AS datasets,
+          collect(DISTINCT coalesce(mt.original_name, mt.name)) AS metrics
         """
 
         try:

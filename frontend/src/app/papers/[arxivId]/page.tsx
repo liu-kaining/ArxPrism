@@ -46,12 +46,10 @@ export default function PaperDetailPage() {
       setError(null);
 
       try {
-        const [paperDetail, graph] = await Promise.all([
-          paperApi.getPaperDetail(arxivId),
-          paperApi.getPaperGraph(arxivId),
-        ]);
+        // getPaperDetail 已经返回 paper 和 graph 数据
+        const paperDetail = await paperApi.getPaperDetail(arxivId);
         setPaper(paperDetail.paper);
-        setGraphData(graph);
+        setGraphData(paperDetail.graph);
       } catch (err) {
         setError(String(err));
         toast.error("加载论文详情失败");
