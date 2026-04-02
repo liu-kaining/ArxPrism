@@ -24,6 +24,13 @@ redis>=5.0.0
 arxiv>=2.1.0
 beautifulsoup4>=4.12.0
 
+# PDF Parsing (学术论文首选)
+PyMuPDF>=1.24.0
+
+# Cloudflare R2 Object Storage
+boto3>=1.34.0
+botocore>=1.34.0
+
 # Frontend
 streamlit>=1.40.0
 streamlit-agraph>=0.0.45

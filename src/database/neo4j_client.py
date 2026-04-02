@@ -186,18 +186,21 @@ class Neo4jClient:
                 p.title = $title,
                 p.published_date = $published_date,
                 p.url = $url,
-                p.core_problem = $core_problem
+                p.core_problem = $core_problem,
+                p.summary = $summary
             ON MATCH SET
                 p.title = $title,
                 p.published_date = $published_date,
                 p.url = $url,
-                p.core_problem = $core_problem
+                p.core_problem = $core_problem,
+                p.summary = $summary
             """,
             arxiv_id=paper_id,
             title=data.title,
             published_date=published_date,
             url=f"https://arxiv.org/abs/{paper_id}",
-            core_problem=extraction.core_problem
+            core_problem=extraction.core_problem,
+            summary=getattr(data, 'summary', '') or ''
         )
 
         # =========================================================================
@@ -272,7 +275,12 @@ class Neo4jClient:
                             baseline.original_name = $baseline_original_name,
                             baseline.first_appeared = $published_date
                         ON MATCH SET
-                            baseline.original_name = $baseline_original_name
+                            baseline.original_name = $baseline_original_name,
+                            baseline.first_appeared = CASE
+                                WHEN $published_date < baseline.first_appeared
+                                THEN $published_date
+                                ELSE baseline.first_appeared
+                            END
                         MERGE (improved)-[r:IMPROVES_UPON]->(baseline)
                         SET r.discovered_at = $published_date
                         """,

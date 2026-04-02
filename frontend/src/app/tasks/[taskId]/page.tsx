@@ -32,11 +32,11 @@ export default function TaskDetailPage() {
     resumeTask,
     cancelTask,
     retryTask,
-    taskDetailLoading,
+    isLoading,
   } = useTaskStore();
 
   useEffect(() => {
-    fetchTask(taskId, { focusDetail: true });
+    fetchTask(taskId);
     const interval = setInterval(() => {
       if (currentTask?.status === "running" || currentTask?.status === "pending") {
         fetchTask(taskId);
@@ -82,7 +82,7 @@ export default function TaskDetailPage() {
     }
   };
 
-  if (taskDetailLoading && !currentTask) {
+  if (isLoading && !currentTask) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-12 w-64" />

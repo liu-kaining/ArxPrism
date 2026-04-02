@@ -2,9 +2,8 @@
 arXiv Radar Service
 
 使用 arxiv 包实现异步论文抓取。
-获取论文元数据，提取 summary 或清洗 HTML 正文。
+优先下载并解析 PDF，失败时才回退到 HTML 或 summary。
 实现幂等性检查、速率限制、内容长度校验。
-支持 PDF 下载到本地存储。
 
 防线3: 论文首尾截断算法 - 解决长文本 Token 爆炸和注意力丢失问题
 
@@ -28,8 +27,17 @@ from bs4 import BeautifulSoup
 from src.core.config import settings
 from src.database.neo4j_client import neo4j_client
 from src.models.task_models import get_domain_preset, DomainPreset
+from src.services.r2_storage import get_r2_storage
 
 logger = logging.getLogger(__name__)
+
+# PyMuPDF 导入 (PDF 解析)
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError:
+    PYMUPDF_AVAILABLE = False
+    logger.warning("PyMuPDF not installed, PDF parsing will be disabled")
 
 
 # =============================================================================
@@ -108,10 +116,17 @@ class PaperContent:
     text_content: str
     html_url: str
     pdf_path: Optional[str] = None  # 本地 PDF 路径
+    source: str = "unknown"  # 内容来源: "pdf", "html", "summary"
 
 
 class ArxivRadar:
-    """arXiv 论文雷达服务 (异步实现)."""
+    """arXiv 论文雷达服务 (异步实现).
+
+    内容获取优先级:
+    1. PDF 下载 + PyMuPDF 解析 (最佳质量)
+    2. HTML 页面解析 (中等质量)
+    3. arXiv summary 兜底 (最低质量)
+    """
 
     def __init__(self) -> None:
         self.rate_limit_delay = settings.arxiv_rate_limit_delay  # 3 秒间隔
@@ -130,7 +145,7 @@ class ArxivRadar:
         1. 构建优化查询 (基于领域预设)
         2. 搜索 arXiv
         3. 幂等性检查 (检查是否已存在于 Neo4j)
-        4. 异步获取 HTML 并清洗
+        4. 下载 PDF 并解析 (优先)
         5. 内容长度校验
         6. 返回有效论文列表
 
@@ -211,6 +226,11 @@ class ArxivRadar:
         """
         获取论文内容前先检查是否已存在 (幂等性).
 
+        内容获取优先级:
+        1. PDF 下载 + PyMuPDF 解析
+        2. HTML 页面解析
+        3. arXiv summary 兜底
+
         Args:
             paper: arxiv.Result object
 
@@ -220,79 +240,69 @@ class ArxivRadar:
         arxiv_id = self._normalize_arxiv_id(paper.entry_id)
 
         # Step 1: Idempotency check - 检查是否已存在于 Neo4j
-        # Reference: ARCHITECTURE.md Section 2
         try:
             exists = await neo4j_client.check_paper_exists(arxiv_id)
             if exists:
                 logger.info(f"Paper {arxiv_id} already exists in database, skipping")
                 return None
         except Exception as e:
-            # 幂等性检查失败不阻断处理
             logger.warning(f"Failed to check paper existence for {arxiv_id}: {e}")
 
         # Step 2: Rate limiting (arXiv 君子协定)
         await asyncio.sleep(self.rate_limit_delay)
 
-        # Step 3: Fetch and parse HTML
-        return await self._fetch_paper_html(paper)
+        # Step 3: 尝试获取内容 (PDF -> HTML -> Summary)
+        content = await self._fetch_paper_content(paper)
+        return content
 
-    async def _fetch_paper_html(self, paper: arxiv.Result) -> Optional[PaperContent]:
+    async def _fetch_paper_content(
+        self,
+        paper: arxiv.Result
+    ) -> Optional[PaperContent]:
         """
-        获取并清洗论文 HTML 内容.
+        获取论文内容，按优先级尝试不同来源.
 
-        使用异步 httpx 避免阻塞事件循环。
-        清洗规则: 移除 style, script, nav, footer, header, Base64 图片等。
-        内容长度校验: 少于 500 字符视为无效页面。
+        优先级: PDF > HTML > Summary
 
         Args:
             paper: arxiv.Result object
 
         Returns:
-            PaperContent if successful, None if parsing fails
+            PaperContent if successful, None otherwise
         """
         arxiv_id = self._normalize_arxiv_id(paper.entry_id)
-        logger.info(f"Fetching paper: {arxiv_id}")
+        html_url = f"https://arxiv.org/html/{arxiv_id}"
+        entry_url = getattr(paper, "entry_id", f"https://arxiv.org/abs/{arxiv_id}")
 
-        try:
-            # arxiv 包不同版本的 Result 结构不同：有的没有 html_url
-            html_url = getattr(paper, "html_url", None)
-            if not html_url:
-                # 尝试构造 arXiv HTML 页面（不带版本号）
-                html_url = f"https://arxiv.org/html/{arxiv_id}"
-
-            text_content: str = ""
-            try:
-                # 使用异步 HTTP 客户端 (避免阻塞 FastAPI 事件循环)
-                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-                    response = await client.get(html_url)
-                    response.raise_for_status()
-                    html = response.text
-
-                # Step 1: 清洗 HTML
-                text_content = self._clean_html(html)
-            except Exception as e:
-                # 兜底：至少用 arxiv summary 跑通链路（可后续再优化为 PDF/TeX 全文）
-                logger.warning(
-                    f"Paper {arxiv_id}: Failed to fetch/parse HTML ({html_url}): {e}. "
-                    f"Falling back to arXiv summary."
+        # ===== 优先级 1: PDF 解析 =====
+        if PYMUPDF_AVAILABLE:
+            text_content, local_pdf_path, public_pdf_url = await self._try_fetch_from_pdf(arxiv_id)
+            if text_content and len(text_content) >= self.min_content_length:
+                text_content = self._truncate_text(text_content)
+                logger.info(f"Paper {arxiv_id}: Successfully extracted from PDF ({len(text_content)} chars)")
+                return PaperContent(
+                    arxiv_id=arxiv_id,
+                    title=paper.title,
+                    authors=[author.name for author in paper.authors],
+                    published_date=self._format_date(
+                        getattr(paper, "published", None)
+                        or getattr(paper, "published_date", None)
+                        or getattr(paper, "updated", None)
+                    ),
+                    text_content=text_content,
+                    html_url=html_url,
+                    pdf_path=public_pdf_url,  # 使用 R2 URL (如果启用) 或本地路径
+                    source="pdf"
                 )
-                text_content = (getattr(paper, "summary", "") or "").strip()
-                html_url = getattr(paper, "entry_id", html_url) or html_url
+            else:
+                logger.warning(f"Paper {arxiv_id}: PDF extraction failed or content too short, trying HTML")
 
-            # Step 2: 内容长度校验
-            # Reference: TECH_DESIGN.md Section 2
-            if len(text_content) < self.min_content_length:
-                logger.warning(
-                    f"Paper {arxiv_id}: Content too short ({len(text_content)} chars), "
-                    f"likely invalid page or paywall"
-                )
-                return None
-
-            # Step 3: 防线3 - 论文首尾截断 (Token 优化)
-            # 如果文本过长，保留头部(Abstract/Introduction)和尾部(Experiments/Conclusion)
+        # ===== 优先级 2: HTML 解析 =====
+        text_content = await self._try_fetch_from_html(arxiv_id, html_url)
+        if text_content and len(text_content) >= self.min_content_length:
             text_content = self._truncate_text(text_content)
-
-            paper_content = PaperContent(
+            logger.info(f"Paper {arxiv_id}: Successfully extracted from HTML ({len(text_content)} chars)")
+            return PaperContent(
                 arxiv_id=arxiv_id,
                 title=paper.title,
                 authors=[author.name for author in paper.authors],
@@ -302,14 +312,160 @@ class ArxivRadar:
                     or getattr(paper, "updated", None)
                 ),
                 text_content=text_content,
-                html_url=html_url
+                html_url=html_url,
+                pdf_path=None,
+                source="html"
+            )
+        else:
+            logger.warning(f"Paper {arxiv_id}: HTML extraction failed or content too short, using summary")
+
+        # ===== 优先级 3: arXiv Summary 兜底 =====
+        text_content = (getattr(paper, "summary", "") or "").strip()
+        if text_content and len(text_content) >= self.min_content_length:
+            text_content = self._truncate_text(text_content)
+            logger.info(f"Paper {arxiv_id}: Using arXiv summary ({len(text_content)} chars)")
+            return PaperContent(
+                arxiv_id=arxiv_id,
+                title=paper.title,
+                authors=[author.name for author in paper.authors],
+                published_date=self._format_date(
+                    getattr(paper, "published", None)
+                    or getattr(paper, "published_date", None)
+                    or getattr(paper, "updated", None)
+                ),
+                text_content=text_content,
+                html_url=entry_url,
+                pdf_path=None,
+                source="summary"
             )
 
-            logger.info(f"Successfully fetched paper {arxiv_id} ({len(text_content)} chars)")
-            return paper_content
+        logger.error(f"Paper {arxiv_id}: All content extraction methods failed")
+        return None
+
+    async def _try_fetch_from_pdf(
+        self,
+        arxiv_id: str
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        尝试从 PDF 提取文本内容.
+
+        Args:
+            arxiv_id: arXiv 论文 ID
+
+        Returns:
+            (text_content, local_pdf_path, public_pdf_url) 或 (None, None, None)
+            - local_pdf_path: 本地 PDF 路径
+            - public_pdf_url: R2 公开访问 URL (如果 R2 未启用则为 None)
+        """
+        pdf_storage_path = Path(settings.pdf_storage_path)
+        pdf_storage_path.mkdir(parents=True, exist_ok=True)
+
+        pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+        pdf_local_path = pdf_storage_path / f"{arxiv_id}.pdf"
+
+        try:
+            # 下载 PDF
+            logger.info(f"Downloading PDF: {pdf_url}")
+            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+                response = await client.get(pdf_url)
+                response.raise_for_status()
+
+                # 写入本地文件
+                with open(pdf_local_path, "wb") as f:
+                    f.write(response.content)
+
+                file_size = len(response.content)
+                logger.info(f"PDF downloaded: {pdf_local_path} ({file_size} bytes)")
+
+            # 解析 PDF (使用 to_thread 避免阻塞事件循环)
+            text_content = await asyncio.to_thread(self._extract_text_from_pdf, str(pdf_local_path))
+            if text_content:
+                # 上传到 R2 (如果启用)
+                r2_storage = get_r2_storage()
+                public_url = r2_storage.upload_pdf(str(pdf_local_path), arxiv_id)
+                if public_url:
+                    logger.info(f"PDF uploaded to R2: {public_url}")
+                    return text_content, str(pdf_local_path), public_url
+                else:
+                    # R2 未启用，返回本地路径作为 public_url
+                    return text_content, str(pdf_local_path), str(pdf_local_path)
+            else:
+                # 解析失败，删除文件
+                pdf_local_path.unlink(missing_ok=True)
+                return None, None, None
 
         except Exception as e:
-            logger.error(f"Failed to fetch paper {arxiv_id}: {e}")
+            logger.error(f"Failed to download/parse PDF for {arxiv_id}: {e}")
+            # 清理不完整的文件
+            if pdf_local_path.exists():
+                pdf_local_path.unlink(missing_ok=True)
+            return None, None, None
+
+    def _extract_text_from_pdf(self, pdf_path: str) -> Optional[str]:
+        """
+        使用 PyMuPDF 从 PDF 提取文本.
+
+        Args:
+            pdf_path: 本地 PDF 文件路径
+
+        Returns:
+            提取的文本内容，失败返回 None
+        """
+        if not PYMUPDF_AVAILABLE:
+            logger.warning("PyMuPDF not available, cannot extract PDF text")
+            return None
+
+        try:
+            doc = fitz.open(pdf_path)
+            text_parts = []
+
+            for page_num, page in enumerate(doc):
+                # 提取文本，保留布局
+                text = page.get_text("text")
+                if text:
+                    text_parts.append(text)
+
+            doc.close()
+
+            full_text = "\n\n".join(text_parts)
+
+            # 清理文本
+            full_text = re.sub(r"\s+", " ", full_text)
+            full_text = full_text.strip()
+
+            logger.info(f"Extracted {len(full_text)} chars from PDF: {pdf_path}")
+            return full_text
+
+        except Exception as e:
+            logger.error(f"Failed to extract text from PDF {pdf_path}: {e}")
+            return None
+
+    async def _try_fetch_from_html(
+        self,
+        arxiv_id: str,
+        html_url: str
+    ) -> Optional[str]:
+        """
+        尝试从 arXiv HTML 页面提取文本.
+
+        Args:
+            arxiv_id: arXiv 论文 ID
+            html_url: HTML 页面 URL
+
+        Returns:
+            提取的文本内容，失败返回 None
+        """
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                response = await client.get(html_url)
+                response.raise_for_status()
+                html = response.text
+
+            text_content = self._clean_html(html)
+            return text_content
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch HTML for {arxiv_id}: {e}")
             return None
 
     def _clean_html(self, html: str) -> str:
@@ -323,8 +479,6 @@ class ArxivRadar:
         - meta 标签
         - 过多空白字符
 
-        修复: 不再只提取 abstract，而是提取整个正文内容。
-
         Reference: ARCHITECTURE.md Section 2
         """
         soup = BeautifulSoup(html, "html.parser")
@@ -334,7 +488,6 @@ class ArxivRadar:
             tag.decompose()
 
         # Step 2: 移除参考文献部分（避免 LLM 产生幻觉）
-        # arXiv HTML 的参考文献通常在 class 包含 "bibliography" 或 "references" 的元素中
         for elem in soup.find_all(class_=re.compile(r"(bibliography|references)", re.IGNORECASE)):
             elem.decompose()
 
@@ -351,7 +504,7 @@ class ArxivRadar:
         for meta in soup.find_all("meta"):
             meta.decompose()
 
-        # Step 5: 提取全部正文文本（不再只提取 abstract）
+        # Step 5: 提取全部正文文本
         text = soup.get_text(separator=" ", strip=True)
 
         # Step 6: 清理多余空白
@@ -387,8 +540,6 @@ class ArxivRadar:
         - 保留后 TAIL_LENGTH (7500字符) - 涵盖 Experiments 和 Conclusion
         - 中间部分替换为省略标记
 
-        这样可以大幅减少 Token 消耗，同时保留最重要的头部和尾部信息。
-
         Args:
             text: 原始论文文本
 
@@ -407,83 +558,6 @@ class ArxivRadar:
         )
 
         return head + MIDDLE_OMISSION + tail
-
-
-# =============================================================================
-# PDF 下载功能
-# =============================================================================
-
-    async def download_paper_pdf(self, arxiv_id: str) -> Optional[str]:
-        """
-        下载论文 PDF 到本地存储.
-
-        Args:
-            arxiv_id: arXiv 论文 ID (不含版本号)
-
-        Returns:
-            本地 PDF 文件路径，失败返回 None
-        """
-        pdf_storage_path = Path(settings.pdf_storage_path)
-        pdf_storage_path.mkdir(parents=True, exist_ok=True)
-
-        pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-        pdf_local_path = pdf_storage_path / f"{arxiv_id}.pdf"
-
-        # 已存在则跳过
-        if pdf_local_path.exists():
-            logger.info(f"PDF already exists: {pdf_local_path}")
-            return str(pdf_local_path)
-
-        try:
-            logger.info(f"Downloading PDF: {pdf_url}")
-            async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-                response = await client.get(pdf_url)
-                response.raise_for_status()
-
-                # 写入文件
-                with open(pdf_local_path, "wb") as f:
-                    f.write(response.content)
-
-                file_size = len(response.content)
-                logger.info(f"PDF downloaded successfully: {pdf_local_path} ({file_size} bytes)")
-                return str(pdf_local_path)
-
-        except Exception as e:
-            logger.error(f"Failed to download PDF for {arxiv_id}: {e}")
-            # 清理不完整的文件
-            if pdf_local_path.exists():
-                pdf_local_path.unlink(missing_ok=True)
-            return None
-
-    async def fetch_paper_with_pdf(
-        self,
-        paper: arxiv.Result
-    ) -> Optional[PaperContent]:
-        """
-        获取论文内容并下载 PDF.
-
-        Args:
-            paper: arxiv.Result object
-
-        Returns:
-            PaperContent if successful, None otherwise
-        """
-        arxiv_id = self._normalize_arxiv_id(paper.entry_id)
-
-        # 先获取 HTML 内容
-        content = await self._fetch_paper_html(paper)
-        if content is None:
-            return None
-
-        # 再下载 PDF (串行执行，避免对 arXiv 造成过大压力)
-        try:
-            pdf_path = await self.download_paper_pdf(arxiv_id)
-            content.pdf_path = pdf_path
-        except Exception as e:
-            logger.warning(f"Failed to download PDF for {arxiv_id}: {e}")
-            content.pdf_path = None
-
-        return content
 
 
 # 全局实例

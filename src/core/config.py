@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     # PDF 存储配置
     pdf_storage_path: str = "/data/papers"  # PDF 文件本地存储路径
 
+    # Cloudflare R2 对象存储配置 (用于存储论文 PDF)
+    r2_enabled: bool = False  # 是否启用 R2 存储
+    r2_account_id: str = ""  # R2 Account ID
+    r2_access_key_id: str = ""  # R2 Access Key ID
+    r2_secret_access_key: str = ""  # R2 Secret Access Key
+    r2_bucket_name: str = "arxprism-papers"  # R2 Bucket 名称
+    r2_public_url: str = ""  # R2 公开访问 URL (如 https://xxx.r2.dev)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Celery 使用 redis_url 作为 broker 和 backend
