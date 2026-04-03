@@ -190,7 +190,10 @@ async def get_evolution_tree(
         links = [
             {
                 "source": l["source"],
-                "target": l["target"]
+                "target": l["target"],
+                "relationshipType": l.get("relationshipType", "IMPROVES_UPON"),
+                "dataset": l.get("dataset") or "",
+                "metrics_improvement": l.get("metrics_improvement") or "",
             }
             for l in tree_data["links"]
         ]
@@ -254,12 +257,26 @@ async def search_papers(
 
 
 @router.get("/papers/stats", response_model=APIResponse)
-async def get_papers_library_stats() -> APIResponse:
+async def get_papers_library_stats(
+    query: str = Query(
+        "",
+        description="与 GET /papers 一致；非空时 by_topic 仅统计命中论文内的 Task 分布",
+    ),
+    task_topic: str = Query(
+        "",
+        description="与 GET /papers 一致；非空时与 query 组合过滤后再聚类 by_topic",
+    ),
+) -> APIResponse:
     """
     图库统计：论文总数、作者节点数、作者-论文关联、按萃取主题(Task)分组的篇数。
+
+    上方四张卡片始终为**全库**；by_topic 在带 query/task_topic 时为**当前筛选命中集合**内分布，
+    与论文列表一致，避免「搜了一批相关论文，主题条却仍是全库」的错位。
     """
     try:
-        stats = await neo4j_client.get_library_stats()
+        stats = await neo4j_client.get_library_stats(
+            search_query=query, topic_filter=task_topic
+        )
         return APIResponse(code=200, message="success", data=stats)
     except Exception as e:
         logger.error(f"Failed to get library stats: {e}")

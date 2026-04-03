@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from src.core.config import settings
 from src.database.neo4j_client import neo4j_client
 from src.models.schemas import APIResponse
+from src.services.llm_extractor import llm_extractor
 from src.services.task_manager import task_manager
 
 logger = logging.getLogger(__name__)
@@ -75,5 +76,85 @@ async def clear_all_data(
             "neo4j": neo4j_stats,
             "redis_arxprism_keys_deleted": redis_deleted,
             "redis_warning": redis_warning,
+        },
+    )
+
+
+@router.post("/heal-graph", response_model=APIResponse)
+async def heal_graph(
+    x_arxprism_admin_token: Annotated[
+        Optional[str], Header(alias="X-ArxPrism-Admin-Token")
+    ] = None,
+) -> APIResponse:
+    """
+    图谱自愈：拉取 Method 名称 → LLM 实体对齐 → 物理融合同义 Method 节点。
+
+    须与 ``/clear-all-data`` 相同的管理员 Token。
+    """
+    token = (settings.admin_reset_token or "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin heal disabled: set ADMIN_RESET_TOKEN in environment",
+        )
+    if not x_arxprism_admin_token or x_arxprism_admin_token != token:
+        raise HTTPException(status_code=403, detail="Invalid or missing admin token")
+
+    method_names = await neo4j_client.get_all_method_names()
+    if not method_names:
+        return APIResponse(
+            code=200,
+            message="success",
+            data={
+                "method_names_count": 0,
+                "clusters_from_llm": 0,
+                "clusters_applied": 0,
+                "alias_nodes_merged": 0,
+                "skipped_clusters": [],
+                "llm_error": None,
+            },
+        )
+
+    known = set(method_names)
+    resolution = await llm_extractor.resolve_method_entities(method_names)
+    if resolution is None:
+        raise HTTPException(
+            status_code=502,
+            detail="LLM entity resolution failed after retries; no graph changes applied",
+        )
+
+    alias_nodes_merged = 0
+    clusters_applied = 0
+    skipped: list[dict] = []
+
+    for cl in resolution.clusters:
+        primary = (cl.primary_name or "").strip()
+        raw_aliases = [
+            (a or "").strip()
+            for a in (cl.aliases or [])
+            if isinstance(a, str) and (a or "").strip() and (a or "").strip() != primary
+        ]
+        aliases = [a for a in raw_aliases if a in known]
+        if not primary:
+            skipped.append({"reason": "empty_primary"})
+            continue
+        if primary not in known:
+            skipped.append({"reason": "primary_not_in_graph", "primary_name": primary})
+            continue
+        if not aliases:
+            continue
+        clusters_applied += 1
+        alias_nodes_merged += await neo4j_client.merge_method_nodes(primary, aliases)
+
+    return APIResponse(
+        code=200,
+        message="success",
+        data={
+            "method_names_count": len(method_names),
+            "clusters_from_llm": len(resolution.clusters),
+            "clusters_applied": clusters_applied,
+            "alias_nodes_merged": alias_nodes_merged,
+            "skipped_clusters": skipped,
+            "llm_error": None,
         },
     )

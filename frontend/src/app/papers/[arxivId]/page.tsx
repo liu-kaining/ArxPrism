@@ -15,9 +15,6 @@ import {
   User,
   Lightbulb,
   AlertTriangle,
-  Beaker,
-  Database,
-  TrendingUp,
   GitBranch,
   Target,
   Wrench,
@@ -25,8 +22,9 @@ import {
   Download,
   Copy,
   FileText,
+  Brain,
 } from "lucide-react";
-import { formatDate } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import toast from "react-hot-toast";
 import { PaperGraphView } from "@/components/graph/PaperGraphView";
 import { EMPTY_GRAPH_RELATIONSHIPS } from "@/lib/graph/paperGraphFlow";
@@ -336,6 +334,32 @@ export default function PaperDetailPage() {
             </Card>
           ) : null}
 
+          {paper.reasoning_process?.trim() ? (
+            <div
+              className={cn(
+                shell,
+                "border-stone-700/25 bg-stone-900/[0.45] text-stone-100 shadow-md backdrop-blur-md"
+              )}
+            >
+              <div className="border-b border-white/10 px-5 py-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold tracking-tight text-stone-50">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/20 text-violet-200 ring-1 ring-violet-400/30">
+                    <Brain className="h-4 w-4" />
+                  </span>
+                  AI Reading Notes / 萃取推理过程
+                </h3>
+                <p className="mt-1 pl-11 text-[11px] text-stone-400">
+                  模型在阅读全文时的思维链摘要，便于对照 PDF 核验
+                </p>
+              </div>
+              <div className="border-l-4 border-violet-500/90 px-5 py-4 pl-6">
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-stone-200/95">
+                  {paper.reasoning_process.trim()}
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           {paper.core_problem ? (
             <Card className={shell}>
               <CardHeader className="pb-2">
@@ -442,70 +466,50 @@ export default function PaperDetailPage() {
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
                 <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-900">
-                  <Beaker className="h-4 w-4" />
+                  <Sparkles className="h-4 w-4" />
                 </span>
-                实验数据
+                对比实验（立体）
               </CardTitle>
+              <p className="text-xs text-stone-500">
+                基线 · 数据集 · 指标变化（来自图谱 IMPROVES_UPON 边与萃取 comparisons）
+              </p>
             </CardHeader>
-            <CardContent className="space-y-4 pt-0">
-              {(paper.baselines ?? []).length > 0 && (
-                <div>
-                  <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
-                    <TrendingUp className="h-3.5 w-3.5" />
-                    基线
-                  </h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(paper.baselines ?? []).map((baseline) => (
-                      <span
-                        key={baseline}
-                        className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-xs text-stone-800"
-                      >
-                        {baseline}
-                      </span>
-                    ))}
-                  </div>
+            <CardContent className="pt-0">
+              {(paper.experiment_comparisons ?? []).length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-stone-200/90">
+                  <table className="w-full border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-stone-200 bg-stone-100/90 text-[11px] font-semibold uppercase tracking-wide text-stone-600">
+                        <th className="px-3 py-2.5">Baseline Method</th>
+                        <th className="px-3 py-2.5">Dataset</th>
+                        <th className="px-3 py-2.5">Metrics Improvement</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(paper.experiment_comparisons ?? []).map((row, i) => (
+                        <tr
+                          key={`${row.baseline}-${i}`}
+                          className="border-b border-stone-100 last:border-0"
+                        >
+                          <td className="px-3 py-2.5 font-medium text-stone-900">
+                            {row.baseline || "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-stone-700">
+                            {row.dataset?.trim() || "—"}
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-xs text-violet-900">
+                            {row.metrics_improvement?.trim() || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
+              ) : (
+                <p className="rounded-lg border border-dashed border-stone-200 bg-stone-50/80 px-3 py-4 text-center text-sm text-stone-500">
+                  无结构化对比数据
+                </p>
               )}
-              {(paper.datasets ?? []).length > 0 && (
-                <div>
-                  <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
-                    <Database className="h-3.5 w-3.5" />
-                    数据集
-                  </h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(paper.datasets ?? []).map((dataset) => (
-                      <span
-                        key={dataset}
-                        className="rounded-full border border-amber-200/80 bg-amber-50/90 px-2.5 py-1 text-xs text-amber-950"
-                      >
-                        {dataset}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {(paper.metrics ?? []).length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
-                    指标
-                  </h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(paper.metrics ?? []).map((metric) => (
-                      <span
-                        key={metric}
-                        className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-950"
-                      >
-                        {metric}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {!(paper.baselines ?? []).length &&
-                !(paper.datasets ?? []).length &&
-                !(paper.metrics ?? []).length && (
-                  <p className="text-sm text-stone-500">暂无实验数据</p>
-                )}
             </CardContent>
           </Card>
 

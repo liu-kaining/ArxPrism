@@ -23,6 +23,7 @@ redis>=5.0.0
 # arXiv & HTML Parsing
 arxiv>=2.1.0
 beautifulsoup4>=4.12.0
+markdownify>=0.14.1
 
 # PDF Parsing (学术论文首选)
 PyMuPDF>=1.24.0

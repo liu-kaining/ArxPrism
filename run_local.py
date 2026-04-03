@@ -115,10 +115,26 @@ async def process_single_paper(
 
     # 打印萃取结果摘要
     method_name = extraction.extraction_data.proposed_method.name
-    baselines = extraction.extraction_data.knowledge_graph_nodes.baselines_beaten
+    comps = extraction.extraction_data.knowledge_graph_nodes.comparisons
     print_success(f"萃取成功! 方法: {method_name}")
-    if baselines:
-        print(f"     击败基线: {', '.join(baselines[:3])}{'...' if len(baselines) > 3 else ''}")
+    if comps:
+        lines = [
+            f"{c.baseline_method or '?'} @ {c.dataset or '?'} ({c.metrics_improvement or '—'})"
+            for c in comps[:3]
+        ]
+        print(f"     对比实验: {'; '.join(lines)}")
+
+    ed = extraction.extraction_data
+    sum_txt = (paper.summary or "").strip()
+    embed_parts = [extraction.title or "", ed.core_problem or ""]
+    if sum_txt:
+        embed_parts.append(sum_txt)
+    embed_text = "\n\n".join(p for p in embed_parts if p)
+    vec = await llm_extractor.generate_embedding(embed_text)
+    upd = {"summary": sum_txt}
+    if vec and len(vec) == 1536:
+        upd["embedding"] = vec
+    extraction = extraction.model_copy(update=upd)
 
     # Step 3: 写入 Neo4j
     print_step("Neo4j", "正在写入图数据库...", "🗄️")

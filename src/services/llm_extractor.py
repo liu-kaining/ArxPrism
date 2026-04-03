@@ -14,13 +14,17 @@ CODE_REVIEW.md Section 3
 import asyncio
 import json
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from openai import AsyncOpenAI, RateLimitError, APITimeoutError
 from pydantic import ValidationError
 
 from src.core.config import settings
-from src.models.schemas import PaperExtractionResponse, TriageResponse
+from src.models.schemas import (
+    EntityResolutionResponse,
+    PaperExtractionResponse,
+    TriageResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +35,10 @@ SYSTEM_PROMPT = """你现在是一位拥有 20 年经验的顶尖云原生架构
 你的任务是阅读一篇最新的学术论文（通常为清洗后的 HTML 或 LaTeX 文本），并极其精确地从中萃取出结构化的核心知识。
 
 【最高指令与防御机制】
-1. 零幻觉容忍 (Zero Hallucination)：你提取的所有信息必须 100% 来源于提供的论文文本。严禁使用你的先验知识进行编造、脑补、推测或过度引申。如果论文中没有明确提及某个字段的信息（尤其是 baselines_beaten 或 datasets_used），请在该字段的数组中保持为空 `[]`，或在字符串字段严格输出 "NOT_MENTIONED"。
+1. 零幻觉容忍 (Zero Hallucination)：你提取的所有信息必须 100% 来源于提供的论文文本。严禁使用你的先验知识进行编造、脑补、推测或过度引申。若论文未给出某对比实验的基线、数据集或指标，请将 `knowledge_graph_nodes.comparisons` 中对应条目留空字段或整条省略；字符串字段无依据时输出 "NOT_MENTIONED" 或保持空字符串。
 2. 领域安全锁 (Domain Gatekeeper)：在开始提取之前，请务必判断该论文是否真实属于"计算机系统、分布式计算、软件工程、AIOps、微服务、站点可靠性工程(SRE)"领域。如果它属于计算机视觉(如纯图像分类)、纯医学、纯物理学等毫不相干的领域（即使包含同名缩写如 SRE-CLIP），请将 `is_relevant_to_domain` 设置为 false，并停止后续所有深度提取（其他字段可留空或填默认值）。
 3. 专家级精炼 (Expert Conciseness)：你的受众是资深技术专家（如量化研究员、架构师）。请使用极度精炼，专业、一针见血的学术/工程语言（中文）进行总结。拒绝废话、套话和诸如"本研究是一项很有意义的探索"之类的空泛表达。
-4. 实体归一化 (Entity Normalization)：在提取 `baselines_beaten`、`datasets_used`、`metrics_improved` 等可能作为知识图谱节点 (Nodes) 的实体时，请尽量提取其专有名词或标准缩写（例如：提取 "DeepLog" 而不是 "a deep learning based log anomaly detection method"），以便于后续的图谱实体对齐。
+4. 实体归一化 (Entity Normalization)：在 `comparisons` 中填写 `baseline_method` 与 `dataset` 时，尽量使用论文中的专有名词或标准缩写（如 "DeepLog"、"HDFS"），避免整句描述，便于图谱实体对齐。`metrics_improvement` 用简短可读的幅度表述（如 "F1 +5.2%"）。
 
 【输出格式要求】
 你必须且只能输出一个合法的 JSON 对象。不要包含任何 Markdown 格式符号（如 ```json），不要包含任何额外的解释性、过渡性文本。你的输出将被程序直接用 `json.loads()` 解析。JSON 结构必须严格遵守预定义的 Schema。
@@ -55,6 +59,8 @@ USER_PROMPT_TEMPLATE = """请基于 System Prompt 中的指令和严格的 JSON 
   "publication_date": "YYYY-MM-DD",
 
   "extraction_data": {{
+    "reasoning_process": "先思考…再提取…：通读实验与对比章节，列出在哪些数据集上、相对哪些基线、报告了哪些指标变化；再据此填写 comparisons。",
+
     "core_problem": "用 1-2 句话，极其精准地概括这篇论文要解决的【底层痛点】。必须切中要害，说明为什么现有的方法不够好。",
 
     "task_name": "提炼该论文要解决的核心任务专有名词（英文短语），如 Root Cause Analysis、Log Anomaly Detection；若无法概括则 NOT_MENTIONED",
@@ -65,9 +71,13 @@ USER_PROMPT_TEMPLATE = """请基于 System Prompt 中的指令和严格的 JSON 
     }},
 
     "knowledge_graph_nodes": {{
-      "baselines_beaten": ["基线模型A", "基线算法B"],
-      "datasets_used": ["数据集A", "工业环境B"],
-      "metrics_improved": ["指标A (提升 X%)", "指标B (降低 Y%)"]
+      "comparisons": [
+        {{
+          "baseline_method": "DeepLog",
+          "dataset": "HDFS",
+          "metrics_improvement": "Accuracy +5.2%"
+        }}
+      ]
     }},
 
     "critical_analysis": {{
@@ -82,6 +92,25 @@ USER_PROMPT_TEMPLATE = """请基于 System Prompt 中的指令和严格的 JSON 
     }}
   }}
 }}
+"""
+
+ENTITY_RESOLUTION_SYSTEM = """你是一个图谱实体对齐专家。
+你的任务是阅读给定的算法/模型/方法名称列表（来自学术知识图谱的 Method 节点归一化键），
+判断其中哪些名称指代**完全相同**的同一技术实体。
+只有在含义与所指对象实质相同时才归为一组；不要强行合并仅相关或相似但不同的技术。"""
+
+ENTITY_RESOLUTION_USER_TEMPLATE = """以下名称列表中的每一项都是图谱中已存在的 Method.name，请**原样**使用其中的字符串作为 primary_name 与 aliases，不要改写大小写或拼写。
+
+名称列表（JSON 数组）：
+{names_json}
+
+请输出唯一一个 JSON 对象，格式严格如下（不要 Markdown）：
+{{"clusters": [{{"primary_name": "<必须来自上述列表>", "aliases": ["<同义别名，均须来自上述列表>", "..."]}}]}}
+
+规则：
+- 只有 aliases 非空时才有融合意义；无同义词的名称不要生成 cluster。
+- 同一名称不得同时出现在多个 cluster 中。
+- primary_name 应选该组里最标准、最广为人知的写法（仍须是列表中的某一项）。
 """
 
 
@@ -294,6 +323,107 @@ class LLMExtractor:
                 authors=authors,
                 publication_date=publication_date
             )
+
+    async def resolve_method_entities(
+        self, method_names: List[str]
+    ) -> Optional[EntityResolutionResponse]:
+        """
+        调用 LLM 对 Method 名称做同义聚类，供图谱物理融合使用。
+
+        失败时返回 None；输入为空时返回空 clusters，不调用模型。
+        """
+        unique: List[str] = []
+        seen: set[str] = set()
+        for n in method_names:
+            if not n or not isinstance(n, str):
+                continue
+            s = n.strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            unique.append(s)
+
+        if not unique:
+            return EntityResolutionResponse(clusters=[])
+
+        user_prompt = ENTITY_RESOLUTION_USER_TEMPLATE.format(
+            names_json=json.dumps(unique, ensure_ascii=False)
+        )
+        last_error = ""
+        last_response = ""
+        max_tok = min(8192, self.max_tokens)
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": ENTITY_RESOLUTION_SYSTEM},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                    max_tokens=max_tok,
+                )
+                content = response.choices[0].message.content
+                last_response = content or ""
+                return EntityResolutionResponse.model_validate_json(content)
+            except json.JSONDecodeError as e:
+                last_error = f"JSON parse failed: {e}"
+                logger.warning("resolve_method_entities attempt %s: %s", attempt, last_error)
+            except ValidationError as e:
+                last_error = f"Pydantic validation failed: {e}"
+                logger.warning("resolve_method_entities attempt %s: %s", attempt, last_error)
+            except (RateLimitError, APITimeoutError) as e:
+                last_error = f"API error: {e}"
+                logger.warning("resolve_method_entities attempt %s: %s", attempt, last_error)
+            except Exception as e:
+                last_error = str(e)
+                logger.error("resolve_method_entities attempt %s: %s", attempt, e)
+
+            if attempt < self.max_retries:
+                delay = self.base_delay * (2 ** (attempt - 1))
+                await asyncio.sleep(delay)
+
+        logger.error(
+            "resolve_method_entities failed after %s attempts: %s raw=%s",
+            self.max_retries,
+            last_error,
+            (last_response[:200] if last_response else ""),
+        )
+        return None
+
+    async def generate_embedding(self, text: str) -> list[float]:
+        """
+        调用 OpenAI Embeddings API（text-embedding-3-small，1536 维）。
+        最多 2 次退避重试；全部失败返回 []。
+        """
+        if not (text or "").strip():
+            return []
+        cleaned = text.replace("\n", " ")
+        if len(cleaned) > 24000:
+            cleaned = cleaned[:24000]
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                response = await self.client.embeddings.create(
+                    model="text-embedding-3-small",
+                    input=cleaned,
+                    dimensions=1536,
+                )
+                vec = response.data[0].embedding
+                return list(vec) if vec is not None else []
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Embedding attempt %s/3 failed: %s",
+                    attempt + 1,
+                    e,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(self.base_delay * (attempt + 1))
+        logger.error("Embedding failed after retries: %s", last_error)
+        return []
 
 
 # 全局实例

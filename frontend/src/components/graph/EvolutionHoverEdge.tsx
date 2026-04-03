@@ -12,10 +12,20 @@ export type EvolutionEdgePayload = {
   relationshipType?: string;
   metrics?: string[];
   datasets?: string[];
+  /** Neo4j IMPROVES_UPON 边属性 */
+  dataset?: string;
+  metrics_improvement?: string;
 };
 
 function formatEdgeTooltip(d: EvolutionEdgePayload | undefined): string {
   const rel = d?.relationshipType?.trim() || "IMPROVES_UPON";
+  const dsEdge = d?.dataset?.trim() ?? "";
+  const metEdge = d?.metrics_improvement?.trim() ?? "";
+  if (dsEdge || metEdge) {
+    const bracket = dsEdge ? `[${dsEdge}]` : "[]";
+    const tail = metEdge || "—";
+    return `${rel}  ${bracket} ${tail}`;
+  }
   const metrics = d?.metrics?.filter(Boolean) ?? [];
   const datasets = d?.datasets?.filter(Boolean) ?? [];
   const parts: string[] = [rel];

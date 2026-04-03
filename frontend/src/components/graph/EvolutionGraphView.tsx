@@ -51,7 +51,9 @@ function evolutionDataSignature(
     .map((l, i) => {
       const m = (l.metrics ?? []).join("\u0004");
       const ds = (l.datasets ?? []).join("\u0004");
-      return `${l.source}\u0000${l.target}\u0000${i}\u0000${l.relationshipType ?? ""}\u0000${m}\u0000${ds}`;
+      const d1 = l.dataset ?? "";
+      const mi = l.metrics_improvement ?? "";
+      return `${l.source}\u0000${l.target}\u0000${i}\u0000${l.relationshipType ?? ""}\u0000${m}\u0000${ds}\u0000${d1}\u0000${mi}`;
     })
     .join("\u0002");
   return `${height}\u0003${nodePart}\u0003${linkPart}`;

@@ -24,6 +24,7 @@ from typing import Any, Optional
 import arxiv
 import httpx
 from bs4 import BeautifulSoup
+from markdownify import markdownify
 
 from src.core.config import settings
 from src.database.neo4j_client import neo4j_client
@@ -139,6 +140,7 @@ class PaperContent:
     html_url: str
     pdf_path: Optional[str] = None  # 本地 PDF 路径
     source: str = "unknown"  # 内容来源: "pdf", "html", "summary"
+    summary: str = ""  # arXiv API 摘要，用于向量拼接与入库
 
 
 @dataclass(frozen=True)
@@ -344,6 +346,7 @@ class ArxivRadar:
         arxiv_id = self._normalize_arxiv_id(paper.entry_id)
         html_url = f"https://arxiv.org/html/{arxiv_id}"
         entry_url = getattr(paper, "entry_id", f"https://arxiv.org/abs/{arxiv_id}")
+        abstract = (getattr(paper, "summary", "") or "").strip()
 
         # ===== 优先级 1: HTML 解析（HTML-First，减轻 PDF 双栏错位幻觉）=====
         text_content = await self._try_fetch_from_html(arxiv_id, html_url)
@@ -364,7 +367,8 @@ class ArxivRadar:
                 text_content=text_content,
                 html_url=html_url,
                 pdf_path=None,
-                source="html"
+                source="html",
+                summary=abstract,
             )
         logger.warning(
             f"Paper {arxiv_id}: HTML-First path failed or too short; falling back to PDF if available"
@@ -390,12 +394,13 @@ class ArxivRadar:
                     text_content=text_content,
                     html_url=html_url,
                     pdf_path=public_pdf_url,
-                    source="pdf"
+                    source="pdf",
+                    summary=abstract,
                 )
             logger.warning(f"Paper {arxiv_id}: PDF fallback failed or too short; trying summary")
 
         # ===== 优先级 3: arXiv Summary 兜底 =====
-        text_content = (getattr(paper, "summary", "") or "").strip()
+        text_content = abstract
         if text_content and len(text_content) >= self.min_content_length:
             text_content = self._truncate_text(text_content)
             logger.info(
@@ -413,7 +418,8 @@ class ArxivRadar:
                 text_content=text_content,
                 html_url=entry_url,
                 pdf_path=None,
-                source="summary"
+                source="summary",
+                summary=abstract,
             )
 
         logger.error(f"Paper {arxiv_id}: All content extraction methods failed")
@@ -581,12 +587,11 @@ class ArxivRadar:
         for meta in soup.find_all("meta"):
             meta.decompose()
 
-        # Step 5: 提取全部正文文本
-        text = soup.get_text(separator=" ", strip=True)
+        # Step 5: 转为 Markdown（保留标题/列表/表格结构，剥离超链接与图片）
+        text = markdownify(str(soup), heading_style="ATX", strip=["a", "img"])
 
-        # Step 6: 清理多余空白
-        text = re.sub(r"\s+", " ", text)
-        text = text.strip()
+        # Step 6: 去除多余连续空行（三行及以上 → 两行）
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
 
         return text
 

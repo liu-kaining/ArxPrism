@@ -16,8 +16,11 @@ from src.models.schemas import (
     TriageResponse,
     ExtractionData,
     KnowledgeGraphNodes,
+    ExperimentComparison,
     CriticalAnalysis,
     ProposedMethod,
+    EntityCluster,
+    EntityResolutionResponse,
 )
 
 from src.models.task_models import (
@@ -51,8 +54,11 @@ __all__ = [
     "TriageResponse",
     "ExtractionData",
     "KnowledgeGraphNodes",
+    "ExperimentComparison",
     "CriticalAnalysis",
     "ProposedMethod",
+    "EntityCluster",
+    "EntityResolutionResponse",
     # Task Models
     "TaskStatus",
     "TaskProgress",

@@ -180,6 +180,7 @@ async def _process_paper_async(
             text_content=paper_content["text_content"],
             html_url=paper_content["html_url"],
             pdf_path=paper_content.get("pdf_path"),  # 可选字段
+            summary=(paper_content.get("summary") or "").strip(),
         )
 
         # Step 2: 调用 LLM 萃取 (异步)
@@ -217,6 +218,18 @@ async def _process_paper_async(
             result.message = "LLM omitted extraction_data for a domain-relevant paper"
             result.is_relevant = True
             return result
+
+        ed = extraction.extraction_data
+        sum_txt = (paper_content.get("summary") or "").strip()
+        embed_parts = [extraction.title or "", ed.core_problem or ""]
+        if sum_txt:
+            embed_parts.append(sum_txt)
+        embed_text = "\n\n".join(p for p in embed_parts if p)
+        vec = await llm_extractor.generate_embedding(embed_text)
+        upd: dict = {"summary": sum_txt}
+        if vec and len(vec) == 1536:
+            upd["embedding"] = vec
+        extraction = extraction.model_copy(update=upd)
 
         # Step 4: 写入 Neo4j (异步)
         logger.info(f"Paper {paper_id}: Upserting to Neo4j graph...")
@@ -321,6 +334,7 @@ async def _execute_task_pipeline(
                 "published_date": paper.published_date,
                 "text_content": paper.text_content,
                 "html_url": paper.html_url,
+                "summary": paper.summary,
             }
 
             result = await _process_paper_async(content_dict, task_id)
@@ -410,7 +424,8 @@ def trigger_pipeline_sync(topic_query: str, max_results: int = 10, domain_preset
                 "authors": paper.authors,
                 "published_date": paper.published_date,
                 "text_content": paper.text_content,
-                "html_url": paper.html_url
+                "html_url": paper.html_url,
+                "summary": paper.summary,
             }
             result = await _process_paper_async(content_dict)
             results.append(result)
@@ -451,6 +466,7 @@ async def trigger_pipeline_sync_async(topic_query: str, max_results: int = 10, d
             "published_date": paper.published_date,
             "text_content": paper.text_content,
             "html_url": paper.html_url,
+            "summary": paper.summary,
         }
         result = await _process_paper_async(content_dict)
         results.append(result)
@@ -505,6 +521,7 @@ async def trigger_pipeline_task_async(
             "published_date": paper.published_date,
             "text_content": paper.text_content,
             "html_url": paper.html_url,
+            "summary": paper.summary,
         }
 
         if hasattr(task_func, "delay"):

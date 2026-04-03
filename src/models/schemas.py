@@ -4,73 +4,13 @@ ArxPrism Pydantic 数据契约
 严格按照 PROMPT_ENGINEERING.md 中的定义实现所有 Pydantic V2 模型。
 所有字段都有 Field(description=...) 和合理的默认值。
 
-防线1: Pydantic 垃圾实体拦截器 - 过滤 LLM 幻觉提取的无效实体
-防线2: 使用 Pydantic V2 @field_validator(mode='after')
+v2.0：`KnowledgeGraphNodes` 使用立体 `comparisons`；`ExtractionData` 含 CoT 字段 `reasoning_process`。
 
 Reference: PROMPT_ENGINEERING.md Section 2, ARCHITECTURE.md Section 4
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from typing import List, Optional
-import re
-
-
-# =============================================================================
-# 防线1: LLM 幻觉实体黑名单
-# =============================================================================
-
-# 垃圾实体黑名单 - 这些词会被直接过滤掉
-GARBAGE_ENTITY_BLACKLIST = {
-    # SOTA 变体
-    "sota", "state-of-the-art", "state of the art", "sota model", "sota method",
-    # 通用 baseline 变体
-    "baseline", "baselines", "baseline model", "baseline method", "baseline approach",
-    "traditional", "traditional methods", "traditional approach", "traditional model",
-    "previous work", "previous methods", "prior work", "prior methods",
-    # 通用/无意义词
-    "none", "not_mentioned", "not mentioned", "n/a", "na", "null", "nil",
-    "unknown", "various", "many", "several", "some",
-    # 模糊描述
-    "existing", "existing methods", "existing approaches", "existing models",
-    "current", "current methods", "state of the art", "the state of the art",
-    "most", "most methods", "most models", "others", "other methods",
-}
-
-
-def _is_garbage_entity(entity: str) -> bool:
-    """
-    检查实体是否为垃圾实体（LLM 幻觉产物）。
-
-    Args:
-        entity: 待检查的实体名称
-
-    Returns:
-        True 如果是垃圾实体，False 如果是有效实体
-    """
-    if not entity or not isinstance(entity, str):
-        return True
-
-    # 清理并转小写
-    cleaned = entity.strip().lower()
-
-    # 空字符串直接拒绝
-    if not cleaned:
-        return True
-
-    # 直接匹配黑名单
-    if cleaned in GARBAGE_ENTITY_BLACKLIST:
-        return True
-
-    # 检查是否被黑名单词完整包含（避免变体绕过）
-    for banned in GARBAGE_ENTITY_BLACKLIST:
-        if banned in cleaned and len(cleaned) < len(banned) + 5:
-            return True
-
-    # 纯数字或符号
-    if re.match(r'^[\d\-\_\.\/\:]+$', cleaned):
-        return True
-
-    return False
 
 
 class ProposedMethod(BaseModel):
@@ -86,79 +26,30 @@ class ProposedMethod(BaseModel):
     )
 
 
+class ExperimentComparison(BaseModel):
+    """立体实验对比：在 A 数据集上相对 B 基线方法的指标变化。"""
+
+    baseline_method: str = Field(
+        default="",
+        description="作为基线的对比方法名称",
+    )
+    dataset: str = Field(
+        default="",
+        description="实验使用的数据集或环境",
+    )
+    metrics_improvement: str = Field(
+        default="",
+        description="核心指标的具体提升（如 F1 +5%, Latency -10ms）",
+    )
+
+
 class KnowledgeGraphNodes(BaseModel):
-    """知识图谱节点实体 (用于构建 Neo4j Nodes).
+    """知识图谱写入用的结构化实验对比（由 comparisons 展开为 Dataset / Method / IMPROVES_UPON）。"""
 
-    防线1实现: 使用 @field_validator(mode='after') 过滤 LLM 幻觉实体。
-    """
-
-    baselines_beaten: List[str] = Field(
+    comparisons: List[ExperimentComparison] = Field(
         default_factory=list,
-        description="具体的被击败的基线模型名称列表（极度重要，用于构建 IMPROVES_UPON 图谱边）"
+        description="具体的对比实验结果列表。记录在什么数据集上相对什么基线、指标如何变化。",
     )
-    datasets_used: List[str] = Field(
-        default_factory=list,
-        description="实验中使用的数据集或工业环境名称列表"
-    )
-    metrics_improved: List[str] = Field(
-        default_factory=list,
-        description="核心提升的指标名称及幅度列表"
-    )
-
-    @field_validator('baselines_beaten', 'datasets_used', 'metrics_improved', mode='after')
-    @classmethod
-    def _filter_garbage_entities(cls, v: List[str]) -> List[str]:
-        """
-        Pydantic V2 字段验证器: 过滤 LLM 幻觉产生的垃圾实体。
-
-        黑名单包含: "sota", "state-of-the-art", "previous work",
-        "traditional methods", "baseline", "none", "not_mentioned" 等变体。
-
-        Args:
-            v: LLM 返回的原始列表
-
-        Returns:
-            清洗后的干净列表
-        """
-        if not isinstance(v, list):
-            return []
-
-        cleaned = []
-        for item in v:
-            if not isinstance(item, str):
-                continue
-
-            # 清理空格
-            item = item.strip()
-
-            # 跳过空字符串
-            if not item:
-                continue
-
-            # 跳过垃圾实体
-            if _is_garbage_entity(item):
-                continue
-
-            # 跳过太短的（通常是误识别）
-            if len(item) < 2:
-                continue
-
-            # 跳过太长的（可能是整句误识别）
-            if len(item) > 200:
-                continue
-
-            cleaned.append(item)
-
-        # 去重（保持顺序）
-        seen = set()
-        result = []
-        for item in cleaned:
-            lower_item = item.lower()
-            if lower_item not in seen:
-                seen.add(lower_item)
-                result.append(item)
-
-        return result
 
 
 class CriticalAnalysis(BaseModel):
@@ -186,6 +77,13 @@ class TriageResponse(BaseModel):
 class ExtractionData(BaseModel):
     """论文萃取的核心数据."""
 
+    reasoning_process: str = Field(
+        default="",
+        description=(
+            "思维链推理过程：仔细阅读论文的实验部分，思考提出了什么方法，"
+            "在哪些数据集上和哪些基线模型做了对比？"
+        ),
+    )
     core_problem: str = Field(
         default="NOT_MENTIONED",
         description="一句话总结要解决的底层痛点"
@@ -221,6 +119,35 @@ class PaperExtractionResponse(BaseModel):
             "论文萃取结构化数据；当 is_relevant_to_domain 为 false 时 LLM 可省略该字段，"
             "不得因此触发校验失败"
         ),
+    )
+    summary: str = Field(
+        default="",
+        description="arXiv 摘要等全文外文本，由流水线在 LLM 萃取后注入，用于入库与向量拼接",
+    )
+    embedding: Optional[List[float]] = Field(
+        default=None,
+        description="text-embedding-3-small 1536 维向量，由流水线调用 Embeddings API 注入",
+    )
+
+
+class EntityCluster(BaseModel):
+    """LLM 建议的同义 Method 聚类（物理融合前契约）。"""
+
+    primary_name: str = Field(
+        description="该技术最标准、最广为人知的核心名称（如 'deeplog' 或 'llm'）"
+    )
+    aliases: List[str] = Field(
+        default_factory=list,
+        description="应该被合并到 primary_name 的其他别名列表",
+    )
+
+
+class EntityResolutionResponse(BaseModel):
+    """实体对齐：Method 节点融合建议列表。"""
+
+    clusters: List[EntityCluster] = Field(
+        default_factory=list,
+        description="识别出的实体同义词聚类列表",
     )
 
 

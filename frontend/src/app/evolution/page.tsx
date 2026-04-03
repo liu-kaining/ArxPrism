@@ -118,8 +118,9 @@ function EvolutionPageContent() {
             库里的方法（可点选）
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            「有谱系」表示至少有一条 IMPROVES_UPON；萃取里写出 baselines_beaten
-            后才会出现边。
+            「有谱系」表示至少有一条 IMPROVES_UPON；萃取里在{" "}
+            <code className="rounded bg-muted px-1">comparisons</code>{" "}
+            中给出基线后才会写入边。
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -140,8 +141,9 @@ function EvolutionPageContent() {
                 </p>
                 {withEvolution.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    暂无。请先跑论文萃取流水线，且 LLM 需在结果中给出
-                    baselines_beaten，才会写入 IMPROVES_UPON。
+                    暂无。请先跑论文萃取流水线，且 LLM 需在{" "}
+                    <code className="rounded bg-muted px-1">comparisons</code>{" "}
+                    中写出基线对比，才会写入 IMPROVES_UPON。
                   </p>
                 ) : (
                   <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto pr-1">

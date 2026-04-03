@@ -51,10 +51,10 @@ Claude Code 必须严格按照以下实体和关系构建 Cypher 语句。
 1.  `(Paper)-[:WRITTEN_BY]->(Author)`
 2.  `(Paper)-[:PROPOSES]->(Method)`
 3.  `(Paper)-[:EVALUATED_ON]->(Dataset)`
-4.  `(Paper)-[:MEASURES]->(Metric)`
+4.  `(Paper)-[:MEASURES]->(Metric)`（历史数据；v2 萃取不再写入 Metric 节点，指标记在 IMPROVES_UPON 边属性上）
 5.  `(Paper)-[:HAS_INNOVATION]->(Innovation)`
 6.  `(Paper)-[:HAS_LIMITATION]->(Limitation)`
-7.  **`(Method)-[:IMPROVES_UPON]->(Method)`** —— **[核心边]**：由 JSON 提取的 `baselines_beaten` 字段生成，用于构建技术进化树。
+7.  **`(Method)-[:IMPROVES_UPON]->(Method)`** —— **[核心边]**：由 JSON `knowledge_graph_nodes.comparisons` 展开；边上可含 `dataset`、`metrics_improvement`、`discovered_at`，用于构建技术进化树与实验上下文。
 
 ---
 
@@ -66,10 +66,13 @@ Claude Code 必须严格按照以下实体和关系构建 Cypher 语句。
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
+class ExperimentComparison(BaseModel):
+    baseline_method: str = Field(description="基线方法名称")
+    dataset: str = Field(description="数据集或环境")
+    metrics_improvement: str = Field(description="指标变化，如 F1 +5%")
+
 class KnowledgeGraphNodes(BaseModel):
-    baselines_beaten: List[str] = Field(description="具体的被击败的基线模型名称列表")
-    datasets_used: List[str] = Field(description="使用的数据集名称列表")
-    metrics_improved: List[str] = Field(description="核心提升的指标名称列表")
+    comparisons: List[ExperimentComparison] = Field(description="对比实验列表")
 
 class CriticalAnalysis(BaseModel):
     key_innovations: List[str] = Field(description="1-2条核心创新点")
@@ -81,6 +84,7 @@ class ProposedMethod(BaseModel):
 
 class PaperExtraction(BaseModel):
     is_relevant_to_domain: bool = Field(description="如果该论文不属于SRE/分布式/云原生领域，必须返回false")
+    reasoning_process: str = Field(description="思维链：实验部分与对比关系的推理")
     core_problem: str = Field(description="一句话总结要解决的底层痛点")
     proposed_method: ProposedMethod
     knowledge_graph_nodes: KnowledgeGraphNodes
