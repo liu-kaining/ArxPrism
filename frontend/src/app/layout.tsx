@@ -18,17 +18,23 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className="dark">
+    <html lang="zh-CN">
       <body
-        className={`${inter.className} dark bg-slate-950 text-slate-50 antialiased`}
+        className={`${inter.className} min-h-screen bg-background text-foreground antialiased`}
       >
-        <div className="min-h-screen flex flex-col">
+        <div className="flex min-h-screen flex-col">
           <Navbar />
-          <main className="flex-1 container mx-auto px-4 py-6">
+          <main className="container mx-auto flex-1 px-4 py-6">
             {children}
           </main>
         </div>
-        <Toaster position="top-right" />
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            className: "!bg-card !text-card-foreground !border !border-border !shadow-md",
+            duration: 4000,
+          }}
+        />
       </body>
     </html>
   );

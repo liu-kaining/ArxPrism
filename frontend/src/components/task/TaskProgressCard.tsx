@@ -98,13 +98,26 @@ export default function TaskProgressCard({ task, compact = false }: TaskProgress
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`text-sm ${status.color}`}>{status.label}</span>
-          <Link href={`/tasks/${task.task_id}`}>
-            <Button variant="ghost" size="icon">
-              <ExternalLink className="w-4 h-4" />
-            </Button>
-          </Link>
+        <div className="flex flex-col items-end gap-0.5">
+          <div className="flex items-center gap-2">
+            <span className={`text-sm ${status.color}`}>{status.label}</span>
+            <Link href={`/tasks/${task.task_id}`}>
+              <Button variant="ghost" size="icon">
+                <ExternalLink className="w-4 h-4" />
+              </Button>
+            </Link>
+          </div>
+          {task.completion_summary ? (
+            <p className="max-w-[14rem] text-right text-[11px] leading-snug text-amber-900/80">
+              {truncate(task.completion_summary, 72)}
+            </p>
+          ) : task.status === "completed" &&
+            task.progress.total === 0 &&
+            task.results.length === 0 ? (
+            <p className="max-w-[14rem] text-right text-[11px] text-stone-500">
+              0 篇 · 见详情
+            </p>
+          ) : null}
         </div>
       </div>
     );
@@ -207,6 +220,13 @@ export default function TaskProgressCard({ task, compact = false }: TaskProgress
         <div className="p-3 rounded bg-destructive/10 text-destructive text-sm">
           <AlertCircle className="w-4 h-4 inline mr-2" />
           {task.error_message}
+        </div>
+      )}
+
+      {task.completion_summary && (
+        <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-xs leading-relaxed text-stone-700">
+          <span className="font-medium text-amber-950">完成说明：</span>
+          {task.completion_summary}
         </div>
       )}
     </div>

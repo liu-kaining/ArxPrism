@@ -95,19 +95,19 @@ export default function TaskDetailPage() {
 
   if (taskDetailLoading || (currentTask && currentTask.task_id !== taskId)) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-12 w-64" />
-        <Skeleton className="h-48 w-full" />
+      <div className="warm-page space-y-6">
+        <Skeleton className="h-12 w-64 rounded-lg bg-muted" />
+        <Skeleton className="h-48 w-full rounded-xl bg-muted" />
       </div>
     );
   }
 
   if (!currentTask) {
     return (
-      <div className="text-center py-12">
+      <div className="warm-page py-12 text-center">
         <p className="text-destructive">任务不存在</p>
-        <Link href="/" className="mt-4 inline-block">
-          <Button variant="outline">返回首页</Button>
+        <Link href="/papers" className="mt-4 inline-block">
+          <Button variant="outline">返回论文列表</Button>
         </Link>
       </div>
     );
@@ -118,10 +118,10 @@ export default function TaskDetailPage() {
   const StatusIcon = status.icon;
 
   return (
-    <div className="space-y-6">
+    <div className="warm-page space-y-6">
       {/* Header */}
       <div className="flex items-start gap-4">
-        <Link href="/">
+        <Link href="/tasks">
           <Button variant="ghost" size="icon">
             <ArrowLeft className="w-5 h-5" />
           </Button>
@@ -129,7 +129,7 @@ export default function TaskDetailPage() {
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <StatusIcon className={`w-8 h-8 ${status.color}`} />
-            <h1 className="text-2xl font-bold">任务详情</h1>
+            <h1 className="text-2xl font-bold text-stone-900">任务详情</h1>
           </div>
           <p className="text-muted-foreground mt-2">
             {task.query} • {task.domain_preset}
@@ -137,11 +137,17 @@ export default function TaskDetailPage() {
           <p className="text-sm text-muted-foreground">
             创建于 {formatDateTime(task.created_at)}
           </p>
+          {task.completion_summary && (
+            <div className="mt-3 rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm leading-relaxed text-stone-800">
+              <span className="font-semibold text-amber-950">完成说明：</span>
+              {task.completion_summary}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Status & Progress */}
-      <Card>
+      <Card className="border-border bg-card shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <span className="flex items-center gap-2">
@@ -230,7 +236,7 @@ export default function TaskDetailPage() {
       </Card>
 
       {/* Results */}
-      <Card>
+      <Card className="border-border bg-card shadow-sm">
         <CardHeader>
           <CardTitle>处理结果 ({task.results.length})</CardTitle>
         </CardHeader>

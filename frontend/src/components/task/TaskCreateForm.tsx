@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useTaskStore } from "@/lib/stores/taskStore";
+import { arxivApi, type ArxivPreviewSearchResult } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card } from "@/components/ui/Card";
@@ -10,6 +11,8 @@ import toast from "react-hot-toast";
 import {
   Rocket,
   Search,
+  Loader2,
+  ExternalLink,
   Shield,
   Cloud,
   Eye,
@@ -52,7 +55,7 @@ const topicColors: Record<string, string> = {
   ai: "from-purple-500 to-pink-500",
   llm: "from-orange-500 to-amber-500",
   aiops: "from-violet-500 to-purple-500",
-  microservices: "from-slate-500 to-gray-500",
+  microservices: "from-stone-500 to-stone-600",
   distributed: "from-yellow-500 to-orange-500",
   cloudnative: "from-sky-500 to-blue-500",
   observability: "from-teal-500 to-cyan-500",
@@ -69,6 +72,8 @@ export default function TaskCreateForm() {
   const [query, setQuery] = useState("");
   const [domainPreset, setDomainPreset] = useState("sre");
   const [maxResults, setMaxResults] = useState(10);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [preview, setPreview] = useState<ArxivPreviewSearchResult | null>(null);
 
   useEffect(() => {
     fetchPresets();
@@ -109,6 +114,33 @@ export default function TaskCreateForm() {
       if (firstQuery) {
         setQuery(firstQuery);
       }
+    }
+  };
+
+  const handlePreviewSearch = async () => {
+    if (!query.trim()) {
+      toast.error("请先输入搜索查询");
+      return;
+    }
+    setPreviewLoading(true);
+    setPreview(null);
+    try {
+      const limit = Math.min(Math.max(maxResults, 5), 25);
+      const data = await arxivApi.previewSearch({
+        query: query.trim(),
+        domain_preset: domainPreset,
+        limit,
+      });
+      setPreview(data);
+      if (data.returned === 0) {
+        toast.error("arXiv 未返回结果，可换关键词或改用「自定义」预设");
+      } else {
+        toast.success(`预览到 ${data.returned} 条，请确认后再创建任务`);
+      }
+    } catch (e) {
+      toast.error(`预览失败: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -159,6 +191,25 @@ export default function TaskCreateForm() {
             );
           })}
         </div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          以上主题与「预览 arXiv」「创建抓取任务」共用同一套后端逻辑；各主题仅提示词、排除词、学科支路不同。你在搜索框里输入的内容会参与全库匹配，并与该主题的领域支路做「或」组合，不再出现「选了 SRE 就搜不到人工智能」那种整段被 cat
+          锁死的情况。选「自定义」时则完全使用下方输入框里的检索式（需符合 arXiv 语法）。
+        </p>
+        <button
+          type="button"
+          onClick={() => setDomainPreset("custom")}
+          className={cn(
+            "w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors",
+            domainPreset === "custom"
+              ? "border-amber-700 bg-amber-50 text-amber-950"
+              : "border-dashed border-stone-300 bg-stone-50/80 text-stone-600 hover:bg-amber-50/60"
+          )}
+        >
+          <span className="font-medium">自定义检索</span>
+          <span className="block text-xs text-muted-foreground">
+            不加领域类别/排除词，检索式即下方输入框内容（适合先试词再抓取）
+          </span>
+        </button>
       </div>
 
       {/* Search Query */}
@@ -174,7 +225,8 @@ export default function TaskCreateForm() {
           className="h-11 rounded-xl"
         />
         <p className="text-xs text-muted-foreground">
-          系统会自动使用英文在 arXiv 搜索
+          建议先点「预览 arXiv」确认能命中。上方「研究主题」只叠加领域提示与过滤，不会再把你输入的关键词锁死在某个
+          arXiv 小类里（例如误选 SRE 仍可直接搜人工智能）。
         </p>
       </div>
 
@@ -198,17 +250,92 @@ export default function TaskCreateForm() {
         </div>
       </div>
 
-      {/* Submit Button */}
-      <Button type="submit" className="w-full h-12 rounded-xl bg-gradient-primary hover:opacity-90 transition-opacity font-medium" disabled={isLoading}>
-        {isLoading ? (
-          <span className="animate-pulse">创建中...</span>
-        ) : (
-          <>
-            <Rocket className="w-5 h-5 mr-2" />
-            创建任务
-          </>
-        )}
-      </Button>
+      {/* Preview */}
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11 flex-1 rounded-xl border-stone-300 bg-white hover:bg-amber-50"
+          onClick={handlePreviewSearch}
+          disabled={previewLoading || isLoading}
+        >
+          {previewLoading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              检索中…
+            </>
+          ) : (
+            <>
+              <Search className="mr-2 h-4 w-4" />
+              预览 arXiv
+            </>
+          )}
+        </Button>
+        <Button
+          type="submit"
+          className="h-11 flex-1 rounded-xl bg-gradient-primary font-medium hover:opacity-90"
+          disabled={isLoading || previewLoading}
+        >
+          {isLoading ? (
+            <span className="animate-pulse">创建中...</span>
+          ) : (
+            <>
+              <Rocket className="mr-2 h-5 w-5" />
+              创建抓取任务
+            </>
+          )}
+        </Button>
+      </div>
+
+      {preview && (
+        <Card className="space-y-3 border-amber-200/80 bg-gradient-to-b from-amber-50/90 to-stone-50/80 p-4 shadow-sm">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+              实际发往 arXiv 的检索式
+            </p>
+            <code className="mt-1 block max-h-24 overflow-auto rounded-lg border border-stone-200/90 bg-white/90 p-2 text-[11px] leading-snug text-stone-800">
+              {preview.optimized_query || "（空）"}
+            </code>
+          </div>
+          <p className="text-xs text-stone-600">
+            共 <span className="font-mono font-semibold">{preview.returned}</span>{" "}
+            条（仅元数据预览）。{preview.note}
+          </p>
+          <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+            {preview.papers.map((p) => (
+              <div
+                key={p.arxiv_id}
+                className="rounded-lg border border-stone-200/80 bg-white/95 p-3 text-sm shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="min-w-0 font-medium leading-snug text-stone-900">
+                    {p.title || p.arxiv_id}
+                  </p>
+                  <a
+                    href={`https://arxiv.org/abs/${p.arxiv_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 text-amber-800 hover:text-amber-950"
+                    aria-label="在 arXiv 打开"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                </div>
+                <p className="mt-1 text-xs text-stone-500">
+                  <span className="font-mono text-amber-900/90">{p.arxiv_id}</span>
+                  {p.published_date ? ` · ${p.published_date}` : null}
+                  {p.authors?.length ? ` · ${p.authors.slice(0, 3).join(", ")}${p.authors.length > 3 ? "…" : ""}` : null}
+                </p>
+                {p.summary_preview ? (
+                  <p className="mt-2 text-xs leading-relaxed text-stone-600">
+                    {p.summary_preview}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </form>
   );
 }

@@ -55,7 +55,7 @@ export function EvolutionHoverEdge({
   const onEnter = useCallback(() => setHover(true), []);
   const onLeave = useCallback(() => setHover(false), []);
 
-  const stroke = hover ? "#22d3ee" : "#64748b";
+  const stroke = hover ? "#b45309" : "#78716c";
   const strokeWidth = hover ? 2.25 : 1.5;
 
   return (
@@ -87,7 +87,7 @@ export function EvolutionHoverEdge({
       <EdgeLabelRenderer>
         {hover ? (
           <div
-            className="nodrag nopan pointer-events-none rounded-md border border-cyan-500/40 bg-slate-950/95 px-2.5 py-1.5 text-[11px] leading-snug text-cyan-100 shadow-lg shadow-cyan-500/10 font-mono max-w-[280px]"
+            className="nodrag nopan pointer-events-none max-w-[280px] rounded-md border border-amber-200/90 bg-white/95 px-2.5 py-1.5 font-mono text-[11px] leading-snug text-stone-800 shadow-lg shadow-amber-900/10"
             style={{
               position: "absolute",
               transform: `translate(-50%, -100%) translate(${labelX}px,${labelY - 8}px)`,

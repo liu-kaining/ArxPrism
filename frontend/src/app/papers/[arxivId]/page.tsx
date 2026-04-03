@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { paperApi, Paper } from "@/lib/api/client";
@@ -30,10 +31,23 @@ import toast from "react-hot-toast";
 import { PaperGraphView } from "@/components/graph/PaperGraphView";
 import { EMPTY_GRAPH_RELATIONSHIPS } from "@/lib/graph/paperGraphFlow";
 
+const PaperPdfViewer = dynamic(
+  () => import("@/components/papers/PaperPdfViewer"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-[min(72vh,760px)] rounded-2xl border border-stone-200/90 bg-stone-100/80 animate-pulse" />
+    ),
+  }
+);
+
 interface GraphData {
   nodes: any[];
   relationships: any[];
 }
+
+const shell =
+  "rounded-2xl border border-stone-200/90 bg-white/95 text-stone-800 shadow-sm";
 
 export default function PaperDetailPage() {
   const params = useParams();
@@ -71,17 +85,19 @@ export default function PaperDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-12 w-64" />
-        <Skeleton className="h-48 w-full" />
-        <Skeleton className="h-96 w-full" />
+      <div className="warm-page space-y-6">
+        <Skeleton className="h-10 w-2/3 rounded-lg bg-muted" />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <Skeleton className="min-h-[520px] rounded-2xl bg-muted lg:col-span-8" />
+          <Skeleton className="h-96 rounded-2xl bg-muted lg:col-span-4" />
+        </div>
       </div>
     );
   }
 
   if (error || !paper) {
     return (
-      <div className="text-center py-12">
+      <div className="warm-page py-12 text-center">
         <p className="text-destructive">加载失败: {error}</p>
         <Link href="/papers" className="mt-4 inline-block">
           <Button variant="outline">返回论文列表</Button>
@@ -92,6 +108,8 @@ export default function PaperDetailPage() {
 
   const absUrl = `https://arxiv.org/abs/${arxivId}`;
   const pdfUrl = `https://arxiv.org/pdf/${arxivId}.pdf`;
+  /** 内嵌阅读器走同源代理，避免 pdf.js Worker 跨域拉 arXiv 时出现 Failed to fetch */
+  const pdfViewerUrl = `/arxiv-proxy/pdf/${encodeURIComponent(arxivId)}`;
 
   const copyText = async (text: string, label: string) => {
     try {
@@ -103,268 +121,344 @@ export default function PaperDetailPage() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start gap-4">
+    <div className="warm-page space-y-5 md:space-y-6">
+      {/* 顶栏：标题与元信息（不占左侧 PDF 列） */}
+      <div className="mb-5 flex items-start gap-3">
         <Link href="/papers">
-          <Button variant="ghost" size="icon" className="rounded-xl">
-            <ArrowLeft className="w-5 h-5" />
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0 rounded-xl border-stone-300 bg-white/90 text-stone-800 hover:bg-amber-50"
+          >
+            <ArrowLeft className="h-5 w-5" />
           </Button>
         </Link>
-        <div className="flex-1 min-w-0 space-y-4">
-          <h1 className="text-3xl font-bold leading-tight">{paper.title}</h1>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
-            <span className="flex items-center gap-1.5 min-w-0">
-              <User className="w-4 h-4 shrink-0" />
+        <div className="min-w-0 flex-1 space-y-2">
+          <h1 className="text-xl font-semibold leading-snug text-stone-900 md:text-2xl">
+            {paper.title}
+          </h1>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-stone-600">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <User className="h-4 w-4 shrink-0 text-amber-800/70" />
               <span className="truncate">
                 {paper.authors?.length
                   ? paper.authors.join(", ")
                   : "作者未从图谱抽取"}
               </span>
             </span>
-            <span className="flex items-center gap-1.5 shrink-0">
-              <Calendar className="w-4 h-4" />
+            <span className="flex items-center gap-1.5">
+              <Calendar className="h-4 w-4 text-amber-800/70" />
               {formatDate(paper.published_date)}
             </span>
-            <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
+            <span className="rounded-md border border-amber-200/80 bg-amber-50/90 px-2 py-0.5 font-mono text-xs text-amber-950">
               arXiv:{arxivId}
             </span>
           </div>
+        </div>
+      </div>
 
-          {/* 高亮：官方页面 + PDF，避免与灰色元信息混在一起看不清 */}
-          <Card className="border-2 border-sky-500/40 bg-gradient-to-br from-sky-500/[0.12] via-background to-background shadow-md">
-            <CardContent className="pt-5 pb-5">
-              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                <div>
-                  <p className="text-base font-semibold text-sky-900 dark:text-sky-100">
-                    原文地址与 PDF
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    在 arXiv 打开论文页，或直接下载官方 PDF（新标签页）
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2 mt-3 sm:mt-0">
-                  <a
-                    href={absUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex"
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
+        {/* 左：PDF 独占大列 */}
+        <div className="lg:col-span-8 lg:sticky lg:top-4 lg:self-start">
+          <PaperPdfViewer
+            fileUrl={pdfViewerUrl}
+            fallbackPdfHref={pdfUrl}
+            className="min-h-[min(78vh,820px)] lg:min-h-[calc(100vh-7.5rem)]"
+          />
+        </div>
+
+        {/* 右：高度随内容，不强行 min-h 撑满视口（避免说明条下大块空白）；过长时内部滚动 */}
+        <div className="lg:col-span-4 lg:sticky lg:top-4 lg:self-start">
+          <div className="space-y-4 lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-stone-200/80 lg:bg-gradient-to-b lg:from-[#faf7f2] lg:to-[#efe9df] lg:p-4 lg:pr-5 lg:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.55)]">
+            <Card className={shell}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-semibold text-stone-900">
+                原文地址与 PDF
+              </CardTitle>
+              <p className="text-xs text-stone-500">
+                左侧为内嵌阅读器；也可在官方站点打开或下载核对。
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0">
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={absUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex"
+                >
+                  <Button
+                    size="sm"
+                    className="rounded-lg bg-amber-800 text-amber-50 hover:bg-amber-900"
                   >
-                    <Button
-                      size="lg"
-                      className="rounded-xl gap-2 font-semibold shadow-sm"
-                    >
-                      <ExternalLink className="w-5 h-5" />
-                      打开 arXiv 页面
-                    </Button>
-                  </a>
-                  <a
-                    href={pdfUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex"
+                    <ExternalLink className="mr-1.5 h-4 w-4" />
+                    arXiv 页面
+                  </Button>
+                </a>
+                <a
+                  href={pdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex"
+                >
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="rounded-lg border-stone-300 bg-white text-stone-800 hover:bg-amber-50"
                   >
-                    <Button
-                      size="lg"
-                      variant="secondary"
-                      className="rounded-xl gap-2 font-semibold border-2 border-sky-500/40 shadow-sm"
-                    >
-                      <Download className="w-5 h-5" />
-                      下载 PDF
-                    </Button>
-                  </a>
-                </div>
+                    <Download className="mr-1.5 h-4 w-4" />
+                    下载 PDF
+                  </Button>
+                </a>
               </div>
-              <div className="mt-4 space-y-2 rounded-lg border bg-muted/40 p-3">
+              <div className="mt-3 space-y-2 rounded-lg border border-stone-200/80 bg-stone-50/80 p-3">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="text-xs font-medium text-muted-foreground shrink-0 w-28">
-                    Abs 链接
+                  <span className="w-24 shrink-0 text-xs font-medium text-stone-500">
+                    Abs
                   </span>
-                  <code className="flex-1 break-all text-xs sm:text-sm text-foreground">
+                  <code className="flex-1 break-all text-xs text-stone-800">
                     {absUrl}
                   </code>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="shrink-0 gap-1"
+                    className="shrink-0 border-stone-300 bg-white"
                     onClick={() => copyText(absUrl, "Abs 链接")}
                   >
-                    <Copy className="w-3.5 h-3.5" />
+                    <Copy className="mr-1 h-3.5 w-3.5" />
                     复制
                   </Button>
                 </div>
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="text-xs font-medium text-muted-foreground shrink-0 w-28">
-                    PDF 直链
+                  <span className="w-24 shrink-0 text-xs font-medium text-stone-500">
+                    PDF
                   </span>
-                  <code className="flex-1 break-all text-xs sm:text-sm text-foreground">
+                  <code className="flex-1 break-all text-xs text-stone-800">
                     {pdfUrl}
                   </code>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="shrink-0 gap-1"
+                    className="shrink-0 border-stone-300 bg-white"
                     onClick={() => copyText(pdfUrl, "PDF 链接")}
                   >
-                    <Copy className="w-3.5 h-3.5" />
+                    <Copy className="mr-1 h-3.5 w-3.5" />
                     复制
                   </Button>
                 </div>
               </div>
             </CardContent>
           </Card>
-        </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 stagger-children">
-        {/* Left Column: Paper Details */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* arXiv 摘要（入库时写入 Neo4j，非全文；全文请用上方 PDF） */}
-          {paper.summary?.trim() ? (
-            <Card className="border-0 shadow-lg overflow-hidden">
-              <CardHeader className="pb-3 bg-gradient-to-r from-violet-500/10 to-transparent">
-                <CardTitle className="flex items-center gap-3 text-lg">
-                  <div className="w-10 h-10 rounded-xl bg-violet-500/15 flex items-center justify-center">
-                    <FileText className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+          <Card className={shell}>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 text-amber-900">
+                  <Sparkles className="h-4 w-4" />
+                </span>
+                知识图谱
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {graphData && graphData.nodes?.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-xl border border-stone-200/90 bg-amber-50/50 py-3 text-center">
+                      <p className="text-xl font-bold text-stone-900">
+                        {graphData.nodes.length}
+                      </p>
+                      <p className="text-xs text-stone-600">节点</p>
+                    </div>
+                    <div className="rounded-xl border border-stone-200/90 bg-amber-50/50 py-3 text-center">
+                      <p className="text-xl font-bold text-stone-900">
+                        {graphData.relationships?.length || 0}
+                      </p>
+                      <p className="text-xs text-stone-600">关系</p>
+                    </div>
                   </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Array.from(
+                      new Set(
+                        graphData.nodes.map((n) => n.labels?.[0] || "Unknown")
+                      )
+                    ).map((label) => (
+                      <span
+                        key={label}
+                        className="rounded-full border border-amber-200/80 bg-amber-50/90 px-2.5 py-0.5 text-xs text-amber-950"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="overflow-hidden rounded-xl border border-stone-200 bg-[#f4efe6]">
+                    <PaperGraphView
+                      graphNodes={graphData.nodes}
+                      relationships={
+                        graphData.relationships ?? EMPTY_GRAPH_RELATIONSHIPS
+                      }
+                      height={260}
+                      showMiniMap={false}
+                      className="border-0 shadow-none"
+                    />
+                  </div>
+                  <Link href={`/graph?paper=${arxivId}`} className="block">
+                    <Button className="w-full rounded-xl bg-amber-800 text-amber-50 hover:bg-amber-900">
+                      展开交互式图谱
+                      <ExternalLink className="ml-2 h-4 w-4" />
+                    </Button>
+                  </Link>
+                </div>
+              ) : (
+                <div className="py-8 text-center text-sm text-stone-500">
+                  暂无图谱数据
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {paper.summary?.trim() ? (
+            <Card className={shell}>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 text-violet-900">
+                    <FileText className="h-4 w-4" />
+                  </span>
                   arXiv 摘要
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-base leading-relaxed text-muted-foreground whitespace-pre-wrap">
+              <CardContent className="pt-0">
+                <p className="text-sm leading-relaxed text-stone-600 whitespace-pre-wrap">
                   {paper.summary.trim()}
                 </p>
               </CardContent>
             </Card>
           ) : null}
 
-          {/* Core Problem */}
-          {paper.core_problem && (
-            <Card className="border-0 shadow-lg overflow-hidden">
-              <CardHeader className="pb-3 bg-gradient-to-r from-primary/5 to-transparent">
-                <CardTitle className="flex items-center gap-3 text-lg">
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                    <Target className="w-5 h-5 text-primary" />
-                  </div>
+          {paper.core_problem ? (
+            <Card className={shell}>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-100 text-orange-900">
+                    <Target className="h-4 w-4" />
+                  </span>
                   核心问题
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-lg leading-relaxed">{paper.core_problem}</p>
+              <CardContent className="pt-0">
+                <p className="text-sm leading-relaxed text-stone-800">
+                  {paper.core_problem}
+                </p>
               </CardContent>
             </Card>
-          )}
+          ) : null}
 
-          {/* Proposed Method */}
-          {paper.proposed_method && (
-            <Card className="border-0 shadow-lg overflow-hidden">
-              <CardHeader className="pb-3 bg-gradient-to-r from-primary/5 to-transparent">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-3 text-lg">
-                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                      <Wrench className="w-5 h-5 text-primary" />
-                    </div>
+          {paper.proposed_method ? (
+            <Card className={shell}>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 text-amber-950">
+                      <Wrench className="h-4 w-4" />
+                    </span>
                     提出的方法
                   </CardTitle>
-                  {paper.proposed_method && (
-                    <Link href={`/evolution?method=${encodeURIComponent(paper.proposed_method)}`}>
-                      <Button variant="outline" size="sm" className="rounded-lg">
-                        <GitBranch className="w-4 h-4 mr-1" />
-                        查看进化树
-                      </Button>
-                    </Link>
-                  )}
+                  <Link
+                    href={`/evolution?method=${encodeURIComponent(paper.proposed_method)}`}
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 rounded-lg border-stone-300 bg-white text-xs hover:bg-amber-50"
+                    >
+                      <GitBranch className="mr-1 h-3.5 w-3.5" />
+                      进化树
+                    </Button>
+                  </Link>
                 </div>
               </CardHeader>
-              <CardContent>
-                <p className="text-lg font-semibold text-gradient">
+              <CardContent className="pt-0">
+                <p className="text-base font-semibold text-amber-950">
                   {paper.proposed_method}
                 </p>
               </CardContent>
             </Card>
-          )}
+          ) : null}
 
-          {/* Innovations & Limitations */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Innovations */}
-            <Card className="border-0 shadow-lg overflow-hidden">
-              <CardHeader className="pb-3 bg-gradient-to-r from-green-500/5 to-transparent">
-                <CardTitle className="flex items-center gap-3 text-lg">
-                  <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center">
-                    <Lightbulb className="w-5 h-5 text-green-500" />
-                  </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
+            <Card className={shell}>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-lime-100 text-lime-900">
+                    <Lightbulb className="h-4 w-4" />
+                  </span>
                   创新点
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0">
                 {(paper.innovations ?? []).length > 0 ? (
-                  <ul className="space-y-3">
+                  <ul className="space-y-2">
                     {(paper.innovations ?? []).map((item, i) => (
-                      <li key={i} className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full bg-green-500 mt-2 shrink-0" />
-                        <span className="text-sm leading-relaxed">{item}</span>
+                      <li key={i} className="flex items-start gap-2 text-sm text-stone-700">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600" />
+                        {item}
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-muted-foreground">暂无数据</p>
+                  <p className="text-sm text-stone-500">暂无数据</p>
                 )}
               </CardContent>
             </Card>
 
-            {/* Limitations */}
-            <Card className="border-0 shadow-lg overflow-hidden">
-              <CardHeader className="pb-3 bg-gradient-to-r from-orange-500/5 to-transparent">
-                <CardTitle className="flex items-center gap-3 text-lg">
-                  <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center">
-                    <AlertTriangle className="w-5 h-5 text-orange-500" />
-                  </div>
+            <Card className={shell}>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-100 text-orange-900">
+                    <AlertTriangle className="h-4 w-4" />
+                  </span>
                   局限性
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0">
                 {(paper.limitations ?? []).length > 0 ? (
-                  <ul className="space-y-3">
+                  <ul className="space-y-2">
                     {(paper.limitations ?? []).map((item, i) => (
-                      <li key={i} className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full bg-orange-500 mt-2 shrink-0" />
-                        <span className="text-sm leading-relaxed">{item}</span>
+                      <li key={i} className="flex items-start gap-2 text-sm text-stone-700">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-600" />
+                        {item}
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-muted-foreground">暂无数据</p>
+                  <p className="text-sm text-stone-500">暂无数据</p>
                 )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Experiment Data */}
-          <Card className="border-0 shadow-lg overflow-hidden">
-            <CardHeader className="pb-3 bg-gradient-to-r from-purple-500/5 to-transparent">
-              <CardTitle className="flex items-center gap-3 text-lg">
-                <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center">
-                  <Beaker className="w-5 h-5 text-purple-500" />
-                </div>
+          <Card className={shell}>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 text-purple-900">
+                  <Beaker className="h-4 w-4" />
+                </span>
                 实验数据
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-5">
-              {/* Baselines */}
+            <CardContent className="space-y-4 pt-0">
               {(paper.baselines ?? []).length > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-muted-foreground" />
-                    击败的基线方法
+                  <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    基线
                   </h4>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     {(paper.baselines ?? []).map((baseline) => (
                       <span
                         key={baseline}
-                        className="px-3 py-1.5 rounded-full bg-secondary text-sm"
+                        className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-xs text-stone-800"
                       >
                         {baseline}
                       </span>
@@ -372,19 +466,17 @@ export default function PaperDetailPage() {
                   </div>
                 </div>
               )}
-
-              {/* Datasets */}
               {(paper.datasets ?? []).length > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                    <Database className="w-4 h-4 text-muted-foreground" />
-                    使用的数据集
+                  <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    <Database className="h-3.5 w-3.5" />
+                    数据集
                   </h4>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     {(paper.datasets ?? []).map((dataset) => (
                       <span
                         key={dataset}
-                        className="px-3 py-1.5 rounded-full bg-accent text-sm"
+                        className="rounded-full border border-amber-200/80 bg-amber-50/90 px-2.5 py-1 text-xs text-amber-950"
                       >
                         {dataset}
                       </span>
@@ -392,16 +484,16 @@ export default function PaperDetailPage() {
                   </div>
                 </div>
               )}
-
-              {/* Metrics */}
               {(paper.metrics ?? []).length > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium mb-3">评估指标</h4>
-                  <div className="flex flex-wrap gap-2">
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    指标
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
                     {(paper.metrics ?? []).map((metric) => (
                       <span
                         key={metric}
-                        className="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-sm font-semibold"
+                        className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-950"
                       >
                         {metric}
                       </span>
@@ -409,88 +501,20 @@ export default function PaperDetailPage() {
                   </div>
                 </div>
               )}
-
               {!(paper.baselines ?? []).length &&
                 !(paper.datasets ?? []).length &&
                 !(paper.metrics ?? []).length && (
-                <p className="text-muted-foreground">暂无实验数据</p>
-              )}
+                  <p className="text-sm text-stone-500">暂无实验数据</p>
+                )}
             </CardContent>
           </Card>
-        </div>
 
-        {/* Right Column: Knowledge Graph */}
-        <div className="lg:col-span-1">
-          <Card className="border-0 shadow-lg sticky top-20 overflow-hidden">
-            <CardHeader className="pb-3 bg-gradient-to-r from-primary/5 to-transparent">
-              <CardTitle className="flex items-center gap-3 text-lg">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-primary" />
-                </div>
-                知识图谱
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {graphData && graphData.nodes?.length > 0 ? (
-                <div className="space-y-4">
-                  {/* Stats */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="p-4 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 text-center">
-                      <p className="text-2xl font-bold">{graphData.nodes.length}</p>
-                      <p className="text-xs text-muted-foreground">节点</p>
-                    </div>
-                    <div className="p-4 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 text-center">
-                      <p className="text-2xl font-bold">
-                        {graphData.relationships?.length || 0}
-                      </p>
-                      <p className="text-xs text-muted-foreground">关系</p>
-                    </div>
-                  </div>
-
-                  {/* Node Types */}
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-medium">节点类型</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {Array.from(
-                        new Set(graphData.nodes.map((n) => n.labels?.[0] || "Unknown"))
-                      ).map((label) => (
-                        <span
-                          key={label}
-                          className="px-2.5 py-1 text-xs rounded-full bg-primary/10"
-                        >
-                          {label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <PaperGraphView
-                    graphNodes={graphData.nodes}
-                    relationships={
-                      graphData.relationships ?? EMPTY_GRAPH_RELATIONSHIPS
-                    }
-                    height={300}
-                    showMiniMap={false}
-                    className="border-0 shadow-none"
-                  />
-
-                  <Link href={`/graph?paper=${arxivId}`} className="block">
-                    <Button className="w-full rounded-xl">
-                      展开交互式图谱
-                      <ExternalLink className="w-4 h-4 ml-2" />
-                    </Button>
-                  </Link>
-                </div>
-              ) : (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
-                    <Sparkles className="w-8 h-8 text-muted-foreground" />
-                  </div>
-                  <p className="text-muted-foreground">暂无图谱数据</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            <p className="rounded-xl border border-amber-200/60 bg-amber-50/90 px-3 py-2 text-xs leading-relaxed text-stone-600 lg:border-amber-200/80">
+              上文结构化内容为{" "}
+              <span className="font-medium text-amber-950">大模型萃取结果</span>
+              ，可能与原文表述不完全一致；请以左侧 PDF 与 arXiv 原文为准进行核对。
+            </p>
+          </div>
         </div>
       </div>
     </div>

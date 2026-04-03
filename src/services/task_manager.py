@@ -16,7 +16,7 @@ Reference: ARCHITECTURE.md Section 5 (扩展)
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from uuid import uuid4
 
 import redis.asyncio as aioredis
@@ -181,28 +181,87 @@ class TaskManager:
         # 保留最近 100 个
         await redis.ltrim(RECENT_TASKS_KEY, 0, MAX_RECENT_TASKS - 1)
 
-    async def list_recent_tasks(self, limit: int = 20) -> List[Task]:
+    _ACTIVE_STATUSES = frozenset(
+        {TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.PAUSED}
+    )
+    _TERMINAL_STATUSES = frozenset(
+        {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
+    )
+
+    def _task_matches_list_filter(
+        self,
+        task: Task,
+        status: Optional[TaskStatus],
+        active_only: bool,
+        terminal_only: bool,
+    ) -> bool:
+        if status is not None:
+            return task.status == status
+        if active_only:
+            return task.status in self._ACTIVE_STATUSES
+        if terminal_only:
+            return task.status in self._TERMINAL_STATUSES
+        return True
+
+    async def list_recent_tasks_page(
+        self,
+        offset: int = 0,
+        limit: int = 20,
+        *,
+        status: Optional[TaskStatus] = None,
+        active_only: bool = False,
+        terminal_only: bool = False,
+    ) -> Tuple[List[Task], int]:
         """
-        获取最近的任务列表.
+        在最近任务 ID 列表（最多 MAX_RECENT_TASKS 条）上筛选后分页。
 
-        Args:
-            limit: 最大返回数量
-
-        Returns:
-            Task 列表 (按创建时间倒序)
+        顺序与 Redis 列表一致（新任务在前）。
         """
         redis = self._get_redis()
+        task_ids = await redis.lrange(
+            RECENT_TASKS_KEY, 0, MAX_RECENT_TASKS - 1
+        )
+        if not task_ids:
+            return [], 0
 
-        # 获取最近任务 ID
-        task_ids = await redis.lrange(RECENT_TASKS_KEY, 0, limit - 1)
+        pipe = redis.pipeline()
+        for tid in task_ids:
+            pipe.get(f"{TASK_KEY_PREFIX}{tid}")
+        raw_rows = await pipe.execute()
 
-        # 批量获取任务详情
-        tasks = []
-        for task_id in task_ids:
-            task = await self.get_task(task_id)
-            if task is not None:
-                tasks.append(task)
+        loaded: List[Task] = []
+        for raw in raw_rows:
+            if not raw:
+                continue
+            try:
+                loaded.append(Task.model_validate_json(raw))
+            except Exception as e:
+                logger.warning("Skip invalid task JSON in recent list: %s", e)
 
+        filtered = [
+            t
+            for t in loaded
+            if self._task_matches_list_filter(
+                t, status, active_only, terminal_only
+            )
+        ]
+        total = len(filtered)
+        page = filtered[offset : offset + limit]
+        return page, total
+
+    async def list_recent_tasks(self, limit: int = 20) -> List[Task]:
+        """
+        获取最近的任务列表（不筛选，取 Redis 序前 limit 条已加载任务）。
+
+        兼容旧调用；新接口请用 list_recent_tasks_page。
+        """
+        tasks, _ = await self.list_recent_tasks_page(
+            offset=0,
+            limit=limit,
+            status=None,
+            active_only=False,
+            terminal_only=False,
+        )
         return tasks
 
     # =========================================================================
@@ -321,12 +380,15 @@ class TaskManager:
         logger.info(f"Task {task_id} started")
         return True
 
-    async def complete_task(self, task_id: str) -> bool:
+    async def complete_task(
+        self, task_id: str, completion_summary: Optional[str] = None
+    ) -> bool:
         """
         将任务标记为完成.
 
         Args:
             task_id: 任务 ID
+            completion_summary: 可选说明（如未检索到论文、全部被跳过等）
 
         Returns:
             是否成功
@@ -337,13 +399,19 @@ class TaskManager:
 
         task.status = TaskStatus.COMPLETED
         task.completed_at = datetime.utcnow()
+        if completion_summary is not None:
+            task.completion_summary = completion_summary
         await self.update_task(task)
 
         # 清除暂停和取消信号
         await self.clear_pause_signal(task_id)
         await self.clear_cancel_signal(task_id)
 
-        logger.info(f"Task {task_id} completed")
+        logger.info(
+            "Task %s completed%s",
+            task_id,
+            f" — {completion_summary}" if completion_summary else "",
+        )
         return True
 
     async def fail_task(self, task_id: str, error_message: str) -> bool:
@@ -513,6 +581,26 @@ class TaskManager:
             await asyncio.sleep(check_interval)
 
         return not await self.is_cancelled(task_id)
+
+    async def wipe_all_arxprism_keys(self) -> int:
+        """
+        删除 Redis 中所有 `arxprism:*` 键（任务 JSON、暂停/取消信号、最近任务列表等）。
+
+        不执行 FLUSHDB，避免影响同库中的 Celery broker 等其他数据。
+        """
+        redis = self._get_redis()
+        deleted = 0
+        cursor = 0
+        while True:
+            cursor, keys = await redis.scan(
+                cursor=cursor, match="arxprism:*", count=500
+            )
+            if keys:
+                deleted += int(await redis.delete(*keys))
+            if cursor == 0:
+                break
+        logger.warning("Redis arxprism:* keys wiped: %s keys deleted", deleted)
+        return deleted
 
 
 # 单例实例

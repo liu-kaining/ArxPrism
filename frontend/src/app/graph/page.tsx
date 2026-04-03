@@ -93,17 +93,17 @@ function GraphPageContent() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="warm-page space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold">知识图谱</h1>
-        <p className="text-muted-foreground mt-1">
+        <h1 className="text-3xl font-bold text-stone-900">知识图谱</h1>
+        <p className="mt-1 text-muted-foreground">
           探索论文相关的知识图谱节点和关系
         </p>
       </div>
 
       {/* Search */}
-      <Card>
+      <Card className="border-border bg-card shadow-sm">
         <CardContent className="pt-6">
           <form
             onSubmit={(e) => {
@@ -127,15 +127,15 @@ function GraphPageContent() {
 
       {/* Results */}
       {isLoading ? (
-        <Card>
+        <Card className="border-border bg-card shadow-sm">
           <CardContent className="py-12">
-            <Skeleton className="h-96 w-full" />
+            <Skeleton className="h-96 w-full rounded-xl bg-muted" />
           </CardContent>
         </Card>
       ) : nodes.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           {/* Filters */}
-          <Card className="lg:col-span-1">
+          <Card className="border-border bg-card shadow-sm lg:col-span-1">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Filter className="w-5 h-5" />
@@ -195,7 +195,7 @@ function GraphPageContent() {
           </Card>
 
           {/* Graph Visualization */}
-          <Card className="lg:col-span-3">
+          <Card className="border-border bg-card shadow-sm lg:col-span-3">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Network className="w-5 h-5" />
@@ -217,7 +217,7 @@ function GraphPageContent() {
           </Card>
         </div>
       ) : (
-        <Card>
+        <Card className="border-border bg-card shadow-sm">
           <CardContent className="py-12 text-center">
             <Network className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
             <p className="text-muted-foreground">
@@ -234,10 +234,10 @@ export default function GraphPage() {
   return (
     <Suspense
       fallback={
-        <div className="space-y-6">
-          <Skeleton className="h-10 w-64" />
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-96 w-full rounded-xl" />
+        <div className="warm-page space-y-6">
+          <Skeleton className="h-10 w-64 rounded-lg bg-muted" />
+          <Skeleton className="h-24 w-full rounded-xl bg-muted" />
+          <Skeleton className="h-96 w-full rounded-xl bg-muted" />
         </div>
       }
     >

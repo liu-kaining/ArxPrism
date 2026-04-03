@@ -100,15 +100,15 @@ function EvolutionGraphInner({
         minZoom={0.1}
         maxZoom={1.4}
         proOptions={{ hideAttribution: true }}
-        className="bg-brand-graph-pane"
+        className="bg-transparent"
         style={{ width: innerWidth, height }}
       >
         <Background gap={16} size={1} />
         <Controls showInteractive={false} position="bottom-right" />
         {showMiniMap ? (
           <MiniMap
-            className="!bg-slate-900 !border-slate-700"
-            maskColor="rgba(15, 23, 42, 0.75)"
+            className="!border-amber-200/90 !bg-white/95"
+            maskColor="rgba(245, 240, 232, 0.75)"
           />
         ) : null}
         <FitView layoutKey={layoutKey} />
@@ -131,7 +131,7 @@ export function EvolutionGraphView({
     return (
       <div
         className={cn(
-          "w-full animate-pulse rounded-lg border border-slate-800 bg-slate-900",
+          "w-full animate-pulse rounded-lg border border-amber-200/80 bg-stone-100",
           className
         )}
         style={{ height }}
@@ -143,7 +143,7 @@ export function EvolutionGraphView({
   return (
     <div
       className={cn(
-        "w-full overflow-hidden rounded-lg border border-slate-800 bg-slate-950",
+        "w-full overflow-hidden rounded-lg border border-amber-200/80 bg-[#ebe6dd]",
         className
       )}
       style={{ height }}

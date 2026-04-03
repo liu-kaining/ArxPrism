@@ -19,7 +19,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import arxiv
 import httpx
@@ -60,51 +60,71 @@ MIDDLE_OMISSION = "\n\n...[MIDDLE OMITTED FOR CONTEXT OPTIMIZATION]...\n\n"
 # 领域预设与查询构建
 # =============================================================================
 
+
+def _arxiv_safe_phrase(text: str) -> str:
+    """去掉会破坏 all:\"...\" 的引号与多余空白。"""
+    if not text:
+        return ""
+    return " ".join(text.replace('"', " ").replace("\\", " ").split())
+
+
 def build_optimized_query(user_query: str, domain_preset_key: str = "sre") -> str:
     """
-    构建优化的 arXiv 搜索查询.
+    构建优化的 arXiv 搜索查询。
 
-    通过领域预设添加包含词、排除词和类别限定，大幅提高搜索结果相关性。
+    旧逻辑曾把「用户关键词」与「预设 cat: 限定」用 AND 绑死，例如 SRE 预设限定
+    cs.SE/cs.DC 时，用户搜 \"artificial intelligence\" 会几乎永远 0 条（AI 论文多在 cs.AI/cs.LG）。
 
-    Args:
-        user_query: 用户输入的原始查询
-        domain_preset_key: 领域预设键名 (sre/aiops/microservices/distributed/cloudnative/custom)
+    现逻辑：
+    - 用户词：all: 全文字段匹配，不受预设类别限制。
+    - 预设词 + 类别：另一支路，用于在目标学科里按预设主题捞文。
+    - 两支路 OR 合并，再套排除词。
 
-    Returns:
-        优化后的 arXiv 搜索查询字符串
-
-    Example:
-        >>> build_optimized_query("site reliability engineering", "sre")
-        '(all:"site reliability engineering" OR all:"incident management" OR all:"SLO") ANDNOT (all:"CLIP" OR all:"image segmentation") AND (cat:cs.SE OR cat:cs.DC)'
+    custom：原样返回用户查询（自行承担 arXiv 语法）。
     """
     preset = get_domain_preset(domain_preset_key)
 
-    # custom 预设不添加任何过滤
     if preset.key == "custom":
-        logger.info(f"Using custom query mode: '{user_query}'")
-        return user_query
+        q = (user_query or "").strip()
+        logger.info("Using custom query mode: %r", q)
+        return q
 
-    # 构建核心查询：用户查询 + 包含词
-    include_parts = [f'all:"{user_query}"']
+    user_q = _arxiv_safe_phrase((user_query or "").strip())
 
-    # 添加领域相关词 (最多取前3个避免查询过长)
-    for term in preset.include_terms[:3]:
-        include_parts.append(f'all:"{term}"')
-
-    # OR 组合包含条件
-    query = f'({" OR ".join(include_parts)})'
-
-    # 添加排除词
+    exclude_suffix = ""
     if preset.exclude_terms:
-        exclude_parts = [f'all:"{term}"' for term in preset.exclude_terms]
-        query += f' ANDNOT ({" OR ".join(exclude_parts)})'
+        exclude_parts = [
+            f'all:"{_arxiv_safe_phrase(t)}"' for t in preset.exclude_terms
+        ]
+        exclude_suffix = f' ANDNOT ({" OR ".join(exclude_parts)})'
 
-    # 添加 arXiv 类别限定
-    if preset.categories:
-        cat_parts = [f'cat:{cat}' for cat in preset.categories]
-        query += f' AND ({" OR ".join(cat_parts)})'
+    cat_parts = [f"cat:{c}" for c in preset.categories] if preset.categories else []
+    cat_clause = f'({" OR ".join(cat_parts)})' if cat_parts else None
 
-    logger.info(f"Built optimized query for domain '{preset.name}': {query}")
+    preset_fragments = [
+        f'all:"{_arxiv_safe_phrase(t)}"' for t in preset.include_terms[:3]
+    ]
+    preset_or = f'({" OR ".join(preset_fragments)})' if preset_fragments else ""
+
+    branches: list[str] = []
+    if user_q:
+        branches.append(f'all:"{user_q}"')
+    if preset_or and cat_clause:
+        branches.append(f"({preset_or} AND {cat_clause})")
+    elif preset_or:
+        branches.append(f"({preset_or})")
+    elif cat_clause and user_q:
+        branches.append(f'(all:"{user_q}" AND {cat_clause})')
+
+    if not branches:
+        core = 'all:"computer"'
+    elif len(branches) == 1:
+        core = branches[0]
+    else:
+        core = f'({" OR ".join(branches)})'
+
+    query = core + exclude_suffix
+    logger.info("Built optimized query for domain %r: %s", preset.name, query)
     return query
 
 
@@ -119,6 +139,16 @@ class PaperContent:
     html_url: str
     pdf_path: Optional[str] = None  # 本地 PDF 路径
     source: str = "unknown"  # 内容来源: "pdf", "html", "summary"
+
+
+@dataclass(frozen=True)
+class ArxivFetchStats:
+    """一次抓取的可观测统计（任务说明与排障）。"""
+
+    original_query: str
+    optimized_query: str
+    search_hits: int
+    accepted: int
 
 
 class ArxivRadar:
@@ -159,17 +189,37 @@ class ArxivRadar:
         Returns:
             List of PaperContent for new papers
         """
-        # 构建优化查询
+        papers, _ = await self.fetch_recent_papers_with_stats(
+            query, max_results, domain_preset
+        )
+        return papers
+
+    async def fetch_recent_papers_with_stats(
+        self,
+        query: str,
+        max_results: int = 10,
+        domain_preset: str = "sre",
+    ) -> tuple[list[PaperContent], ArxivFetchStats]:
+        """同 fetch_recent_papers，额外返回 arXiv 命中数与最终可处理篇数。"""
         optimized_query = build_optimized_query(query, domain_preset)
-        logger.info(f"Fetching papers: original='{query}', optimized='{optimized_query}', max_results={max_results}")
+        logger.info(
+            "Fetching papers: original=%r, optimized=%r, max_results=%s",
+            query,
+            optimized_query,
+            max_results,
+        )
 
-        # Step 1: Search arXiv with optimized query
         papers = self._search_papers(optimized_query, max_results)
+        search_hits = len(papers)
         if not papers:
-            logger.warning(f"No papers found for query: {optimized_query}")
-            return []
+            logger.warning("No papers from arXiv search for query: %s", optimized_query)
+            return [], ArxivFetchStats(
+                original_query=query,
+                optimized_query=optimized_query,
+                search_hits=0,
+                accepted=0,
+            )
 
-        # Step 2: Fetch each paper with dedup and rate limiting
         results: list[PaperContent] = []
         for paper in papers:
             try:
@@ -177,15 +227,26 @@ class ArxivRadar:
                 if content is not None:
                     results.append(content)
             except Exception as e:
-                # 防御性编程: 绝不让单篇失败中断整个批处理
                 logger.error(
-                    f"Failed to process paper {paper.entry_id}: {e}. "
-                    f"Continuing with next paper..."
+                    "Failed to process paper %s: %s. Continuing...",
+                    paper.entry_id,
+                    e,
                 )
                 continue
 
-        logger.info(f"Fetched {len(results)} new papers out of {len(papers)} found")
-        return results
+        logger.info(
+            "Fetched %s new papers out of %s search hits (original=%r)",
+            len(results),
+            search_hits,
+            query,
+        )
+        stats = ArxivFetchStats(
+            original_query=query,
+            optimized_query=optimized_query,
+            search_hits=search_hits,
+            accepted=len(results),
+        )
+        return results, stats
 
     def _search_papers(
         self,
@@ -583,6 +644,49 @@ class ArxivRadar:
         )
 
         return head + MIDDLE_OMISSION + tail
+
+    def preview_arxiv_search(
+        self,
+        query: str,
+        domain_preset: str,
+        limit: int,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """
+        仅查询 arXiv 元数据（标题/作者/摘要），不下载全文、不写库、不分诊。
+        用于创建抓取任务前确认「当前关键词 + 领域预设」是否命中论文。
+        """
+        q = (query or "").strip()
+        if not q:
+            return "", []
+        cap = max(1, min(int(limit), 25))
+        optimized = build_optimized_query(q, domain_preset)
+        raw = self._search_papers(optimized, cap)
+        papers: list[dict[str, Any]] = []
+        for r in raw:
+            entry = getattr(r, "entry_id", "") or ""
+            aid = self._normalize_arxiv_id(entry)
+            title = (getattr(r, "title", None) or "").replace("\n", " ").strip()
+            auth_objs = getattr(r, "authors", None) or []
+            authors: list[str] = []
+            for a in auth_objs:
+                name = getattr(a, "name", None) or str(a)
+                if name:
+                    authors.append(name)
+            pub = getattr(r, "published", None)
+            published_date = self._format_date(pub) if pub else ""
+            summ = getattr(r, "summary", None) or ""
+            summ = " ".join(summ.split())
+            preview = summ[:420] + ("…" if len(summ) > 420 else "")
+            papers.append(
+                {
+                    "arxiv_id": aid,
+                    "title": title,
+                    "authors": authors,
+                    "published_date": published_date,
+                    "summary_preview": preview,
+                }
+            )
+        return optimized, papers
 
 
 # 全局实例

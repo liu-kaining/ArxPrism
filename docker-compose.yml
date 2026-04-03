@@ -72,6 +72,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - APP_ENV=production
       - LOG_LEVEL=INFO
+      - ADMIN_RESET_TOKEN=${ADMIN_RESET_TOKEN:-}
     depends_on:
       neo4j:
         condition: service_healthy

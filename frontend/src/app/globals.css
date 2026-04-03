@@ -5,57 +5,56 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @layer base {
+  /* 全站暖色主题（米杏 + 琥珀主色） */
   :root {
-    --background: 210 20% 98%;
-    --foreground: 222 47% 11%;
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 221 83% 53%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 210 40% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 221 83% 53%;
+    --background: 40 28% 96%;
+    --foreground: 24 12% 14%;
+    --card: 40 20% 99%;
+    --card-foreground: 24 12% 14%;
+    --popover: 40 20% 99%;
+    --popover-foreground: 24 12% 14%;
+    --primary: 28 88% 32%;
+    --primary-foreground: 40 40% 98%;
+    --secondary: 35 26% 92%;
+    --secondary-foreground: 24 12% 18%;
+    --muted: 35 22% 91%;
+    --muted-foreground: 24 8% 42%;
+    --accent: 38 40% 93%;
+    --accent-foreground: 24 12% 18%;
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 40 40% 98%;
+    --border: 35 20% 86%;
+    --input: 35 20% 86%;
+    --ring: 28 75% 38%;
     --radius: 0.75rem;
 
-    /* Gradient colors */
-    --gradient-start: 221 83% 53%;
-    --gradient-end: 217 91% 60%;
+    --gradient-start: 32 82% 44%;
+    --gradient-end: 24 78% 40%;
   }
 
+  /* 与 :root 对齐，避免残留 .dark 类时切回冷色 */
   .dark {
-    --background: 222 47% 8%;
-    --foreground: 210 40% 98%;
-    --card: 222 47% 11%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 47% 11%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62% 50%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 217 33% 17%;
-    --input: 217 33% 17%;
-    --ring: 224 76% 48%;
-
-    /* Gradient colors for dark */
-    --gradient-start: 217 91% 60%;
-    --gradient-end: 224 76% 48%;
+    --background: 40 28% 96%;
+    --foreground: 24 12% 14%;
+    --card: 40 20% 99%;
+    --card-foreground: 24 12% 14%;
+    --popover: 40 20% 99%;
+    --popover-foreground: 24 12% 14%;
+    --primary: 28 88% 32%;
+    --primary-foreground: 40 40% 98%;
+    --secondary: 35 26% 92%;
+    --secondary-foreground: 24 12% 18%;
+    --muted: 35 22% 91%;
+    --muted-foreground: 24 8% 42%;
+    --accent: 38 40% 93%;
+    --accent-foreground: 24 12% 18%;
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 40 40% 98%;
+    --border: 35 20% 86%;
+    --input: 35 20% 86%;
+    --ring: 28 75% 38%;
+    --gradient-start: 32 82% 44%;
+    --gradient-end: 24 78% 40%;
   }
 }
 
@@ -110,52 +109,59 @@
   }
 }
 
-/* Custom scrollbar — 极客指挥台：更细、更暗 */
+/* 滚动条 — 暖灰 */
 @layer utilities {
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgb(51 65 85 / 0.55) rgb(15 23 42 / 0.9);
+    scrollbar-color: rgb(180 165 140 / 0.65) rgb(245 240 232 / 0.95);
   }
 
   ::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
-    background: rgb(15 23 42 / 0.85);
+    background: rgb(245 240 232 / 0.9);
     border-radius: 9999px;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgb(51 65 85 / 0.65);
+    background: rgb(180 165 140 / 0.55);
     border-radius: 9999px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: rgb(71 85 105 / 0.85);
+    background: rgb(160 140 110 / 0.75);
   }
 }
 
-/* React Flow — 暗色画布默认底 */
+/* React Flow — 暖色画布（与全站一致） */
 .react-flow__pane {
-  background-color: #020617;
+  background-color: #ebe6dd;
 }
 
 .react-flow__controls {
-  @apply border-slate-700/80 bg-slate-900/95 shadow-lg;
+  @apply border-amber-200/90 bg-white/95 shadow-md;
 }
 
 .react-flow__controls-button {
-  @apply border-slate-700/80 bg-slate-900 text-slate-200 fill-slate-200;
+  @apply border-amber-200/80 bg-white text-stone-700 fill-stone-700;
 }
 
 .react-flow__controls-button:hover {
-  @apply bg-slate-800;
+  @apply bg-amber-50;
 }
 
 .react-flow__minimap {
-  @apply border border-slate-700/80 bg-slate-900/95;
+  @apply border border-amber-200/90 bg-white/95;
+}
+
+/* 各页统一内容区：浅暖底 + 圆角边框 */
+@layer utilities {
+  .warm-page {
+    @apply rounded-2xl border border-amber-200/50 bg-gradient-to-br from-[#faf6ef]/90 via-[#f7f0e4]/80 to-[#efe4d4]/70 p-4 shadow-sm md:p-6;
+  }
 }
 
 /* Animation keyframes */

@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
+    # 一键清空数据：POST /api/v1/admin/clear-all-data 需在请求头携带
+    # X-ArxPrism-Admin-Token: <与下方一致>；未设置则接口返回 403（防止误暴露）
+    admin_reset_token: str = ""
+
     # Celery 配置 (延迟初始化)
     celery_broker_url: Optional[str] = None
     celery_result_backend: Optional[str] = None

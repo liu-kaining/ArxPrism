@@ -129,6 +129,23 @@ async def get_paper_graph(arxiv_id: str) -> APIResponse:
         raise HTTPException(status_code=500, detail=f"Graph fetch failed: {str(e)}")
 
 
+@router.get("/graph/evolution/methods", response_model=APIResponse)
+async def list_evolution_methods() -> APIResponse:
+    """
+    列出可用于浏览进化树的方法（有 IMPROVES_UPON 的优先，其余为图中孤立 Method 节点）。
+
+    GET /api/v1/graph/evolution/methods
+    """
+    try:
+        data = await neo4j_client.list_evolution_methods()
+        return APIResponse(code=200, message="success", data=data)
+    except Exception as e:
+        logger.error(f"Failed to list evolution methods: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Evolution method list failed: {str(e)}"
+        ) from e
+
+
 @router.get("/graph/evolution", response_model=APIResponse)
 async def get_evolution_tree(
     method_name: str = Query(..., description="Method name to trace")
@@ -198,23 +215,33 @@ async def get_evolution_tree(
 @router.get("/papers", response_model=APIResponse)
 async def search_papers(
     query: str = Query("", description="Keyword/topic to search in stored papers"),
+    task_topic: str = Query(
+        "",
+        description="按萃取 Task 聚类名精确筛选（与 GET /papers/stats 中 by_topic.topic 一致）",
+    ),
     limit: int = Query(20, ge=1, le=100, description="Page size"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ) -> APIResponse:
     """
     按主题/关键词检索已入库论文列表（主路径：查 SRE 主题）。
 
-    - query 为空：返回最近入库论文
+    - query 为空：返回最近入库论文（仍受 task_topic 约束）
     - query 非空：在 title/core_problem/method 中做 contains 匹配
+    - task_topic 非空：仅返回 ADDRESSES 对应 Task 标签匹配的论文
     """
     try:
-        total = await neo4j_client.count_search_papers(query=query)
-        rows = await neo4j_client.search_papers(query=query, limit=limit, offset=offset)
+        total = await neo4j_client.count_search_papers(
+            query=query, task_topic=task_topic
+        )
+        rows = await neo4j_client.search_papers(
+            query=query, limit=limit, offset=offset, task_topic=task_topic
+        )
         return APIResponse(
             code=200,
             message="success",
             data={
                 "query": query,
+                "task_topic": task_topic,
                 "limit": limit,
                 "offset": offset,
                 "total": total,
@@ -224,6 +251,21 @@ async def search_papers(
     except Exception as e:
         logger.error(f"Failed to search papers: {e}")
         raise HTTPException(status_code=500, detail=f"Paper search failed: {str(e)}")
+
+
+@router.get("/papers/stats", response_model=APIResponse)
+async def get_papers_library_stats() -> APIResponse:
+    """
+    图库统计：论文总数、作者节点数、作者-论文关联、按萃取主题(Task)分组的篇数。
+    """
+    try:
+        stats = await neo4j_client.get_library_stats()
+        return APIResponse(code=200, message="success", data=stats)
+    except Exception as e:
+        logger.error(f"Failed to get library stats: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Library stats failed: {str(e)}"
+        )
 
 
 @router.get("/papers/{arxiv_id}", response_model=APIResponse)

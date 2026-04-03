@@ -128,30 +128,45 @@ async def create_task(request: TaskCreateRequest) -> APIResponse:
 
 @router.get("", response_model=APIResponse)
 async def list_tasks(
-    status: Optional[TaskStatus] = Query(None, description="按状态筛选"),
-    limit: int = Query(20, ge=1, le=100, description="返回数量限制")
+    status: Optional[TaskStatus] = Query(None, description="按单一状态筛选"),
+    active_only: bool = Query(
+        False, description="仅 pending / running / paused（与 terminal_only 互斥）"
+    ),
+    terminal_only: bool = Query(
+        False,
+        description="仅 completed / failed / cancelled（已结束，与 active_only 互斥）",
+    ),
+    offset: int = Query(0, ge=0, description="筛选后的偏移（分页）"),
+    limit: int = Query(20, ge=1, le=100, description="每页条数"),
 ) -> APIResponse:
     """
     获取任务列表.
 
-    按创建时间倒序返回最近的任务列表。
+    在 Redis 最近任务列表（最多 100 条 ID）上加载、筛选后分页；`total` 为筛选后的总数。
 
     Query Parameters:
-        - status: 可选，按状态筛选
-        - limit: 返回数量限制 (默认 20)
-
-    Returns:
-        任务列表
+        - status: 指定单一状态时优先，忽略 active_only / terminal_only
+        - active_only: 仅活跃任务
+        - terminal_only: 仅已结束任务（适合「最近完成」分页）
+        - offset / limit: 分页
     """
+    if status is None and active_only and terminal_only:
+        raise HTTPException(
+            status_code=400,
+            detail="active_only and terminal_only cannot both be true",
+        )
     try:
         manager = await get_task_manager()
-        tasks = await manager.list_recent_tasks(limit=limit)
+        use_active = active_only and status is None
+        use_terminal = terminal_only and status is None
+        tasks, total = await manager.list_recent_tasks_page(
+            offset=offset,
+            limit=limit,
+            status=status,
+            active_only=use_active,
+            terminal_only=use_terminal,
+        )
 
-        # 按状态筛选
-        if status is not None:
-            tasks = [t for t in tasks if t.status == status]
-
-        # 转换为摘要格式
         summaries = [
             TaskSummary(
                 task_id=t.task_id,
@@ -160,7 +175,8 @@ async def list_tasks(
                 domain_preset=t.domain_preset,
                 progress=t.progress,
                 created_at=t.created_at,
-                updated_at=t.updated_at
+                updated_at=t.updated_at,
+                completion_summary=t.completion_summary,
             )
             for t in tasks
         ]
@@ -170,10 +186,12 @@ async def list_tasks(
             message="success",
             data={
                 "tasks": [s.model_dump() for s in summaries],
-                "total": len(summaries)
-            }
+                "total": total,
+            },
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to list tasks: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}")

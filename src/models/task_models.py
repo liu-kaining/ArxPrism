@@ -97,6 +97,11 @@ class Task(BaseModel):
     # 错误信息
     error_message: Optional[str] = Field(default=None, description="错误信息")
 
+    # 完成说明（如：检索 0 篇、全部在库被跳过等，便于与「已完成」状态对照）
+    completion_summary: Optional[str] = Field(
+        default=None, description="任务结束时的简要说明（非错误）"
+    )
+
     # 可执行操作
     @property
     def can_pause(self) -> bool:
@@ -163,6 +168,7 @@ class TaskSummary(BaseModel):
     progress: TaskProgress
     created_at: datetime
     updated_at: datetime
+    completion_summary: Optional[str] = None
 
 
 # =============================================================================

@@ -40,13 +40,11 @@ export function CommandCenterNode({ data }: NodeProps) {
           position={Position.Top}
           className="!h-2 !w-2 !border-0 !bg-amber-400/80"
         />
-        <div
-          className="min-w-[150px] max-w-[220px] rounded-2xl border-2 border-amber-400 bg-amber-950/90 px-4 py-3 shadow-lg drop-shadow-[0_0_15px_rgba(245,158,11,0.45)]"
-        >
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-400/90">
+        <div className="min-w-[150px] max-w-[220px] rounded-2xl border-2 border-amber-500 bg-amber-50 px-4 py-3 shadow-md ring-1 ring-amber-200/80">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-800">
             Task
           </div>
-          <div className="mt-1 break-words text-sm font-bold leading-snug text-amber-100">
+          <div className="mt-1 break-words text-sm font-bold leading-snug text-amber-950">
             {d.label}
           </div>
         </div>
@@ -67,11 +65,11 @@ export function CommandCenterNode({ data }: NodeProps) {
           position={Position.Top}
           className="!h-2 !w-2 !border-0 !bg-cyan-400/70"
         />
-        <div className="min-w-[128px] max-w-[200px] rounded-xl border border-cyan-500 bg-cyan-950/90 px-3 py-2 shadow-md">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-cyan-400/90">
+        <div className="min-w-[128px] max-w-[200px] rounded-xl border border-cyan-600 bg-cyan-50 px-3 py-2 shadow-md ring-1 ring-cyan-200/70">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-cyan-800">
             Method
           </div>
-          <div className="mt-0.5 break-words text-sm font-semibold leading-snug text-cyan-100">
+          <div className="mt-0.5 break-words text-sm font-semibold leading-snug text-cyan-950">
             {d.label}
           </div>
         </div>
@@ -90,20 +88,20 @@ export function CommandCenterNode({ data }: NodeProps) {
         <Handle
           type="target"
           position={Position.Top}
-          className="!h-2 !w-2 !border-0 !bg-slate-500"
+          className="!h-2 !w-2 !border-0 !bg-stone-400"
         />
-        <div className="min-w-[140px] max-w-[220px] rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 shadow-md">
-          <div className="font-mono text-[10px] font-medium text-slate-400">
+        <div className="min-w-[140px] max-w-[220px] rounded-lg border border-stone-300 bg-white px-3 py-2 shadow-md ring-1 ring-stone-200/80">
+          <div className="font-mono text-[10px] font-medium text-stone-500">
             {arxivId || "arXiv"}
           </div>
-          <div className="mt-1 line-clamp-2 break-words text-xs font-semibold leading-snug text-slate-100">
+          <div className="mt-1 line-clamp-2 break-words text-xs font-semibold leading-snug text-stone-900">
             {titleStr}
           </div>
         </div>
         <Handle
           type="source"
           position={Position.Bottom}
-          className="!h-2 !w-2 !border-0 !bg-slate-500"
+          className="!h-2 !w-2 !border-0 !bg-stone-400"
         />
       </>
     );
@@ -114,25 +112,25 @@ export function CommandCenterNode({ data }: NodeProps) {
       <Handle
         type="target"
         position={Position.Top}
-        className="!h-2 !w-2 !border-0 !bg-slate-500"
+        className="!h-2 !w-2 !border-0 !bg-stone-400"
       />
       <div
-        className="min-w-[120px] max-w-[200px] rounded-lg border border-slate-600 bg-slate-900/95 px-3 py-2 shadow-md"
+        className="min-w-[120px] max-w-[200px] rounded-lg border border-stone-300 bg-white px-3 py-2 shadow-md ring-1 ring-stone-200/80"
         style={{
           borderColor: d.color ? `${d.color}99` : undefined,
         }}
       >
-        <div className="text-[10px] font-medium uppercase text-slate-500">
+        <div className="text-[10px] font-medium uppercase text-stone-500">
           {d.sublabel}
         </div>
-        <div className="mt-0.5 break-words text-sm font-medium leading-tight text-slate-200">
+        <div className="mt-0.5 break-words text-sm font-medium leading-tight text-stone-900">
           {d.label}
         </div>
       </div>
       <Handle
         type="source"
         position={Position.Bottom}
-        className="!h-2 !w-2 !border-0 !bg-slate-500"
+        className="!h-2 !w-2 !border-0 !bg-stone-400"
       />
     </>
   );
@@ -154,18 +152,18 @@ export function EvolutionGraphNode({ data }: NodeProps) {
         className="!h-2 !w-2 !border-0 !bg-cyan-500/80"
       />
       <div
-        className={`max-w-[220px] rounded-xl border px-3 py-2 shadow-md ${
+        className={`max-w-[220px] rounded-xl border px-3 py-2 shadow-md ring-1 ${
           isRoot
-            ? "border-cyan-400 bg-cyan-950/80 shadow-cyan-500/20"
-            : "border-slate-600 bg-slate-900/95"
+            ? "border-cyan-600 bg-cyan-50 shadow-cyan-900/10 ring-cyan-200/80"
+            : "border-stone-300 bg-white ring-stone-200/80"
         }`}
       >
-        <div className="font-mono text-[10px] text-slate-500">
+        <div className="font-mono text-[10px] text-stone-500">
           G{d.generation}
         </div>
         <div
           className={`text-sm font-semibold leading-snug ${
-            isRoot ? "text-cyan-100" : "text-slate-200"
+            isRoot ? "text-cyan-950" : "text-stone-900"
           }`}
         >
           {d.label}

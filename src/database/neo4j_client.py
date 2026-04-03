@@ -643,7 +643,77 @@ class Neo4jClient:
             logger.error(f"Failed to fetch evolution tree: {e}")
             return {"nodes": [], "links": []}
 
-    async def search_papers(self, query: str = "", limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+    async def list_evolution_methods(self) -> Dict[str, Any]:
+        """
+        供前端「发现」进化树入口：
+        - with_evolution: 至少参与一条 IMPROVES_UPON 的 Method（推荐点击）
+        - other_methods: 图中有节点、但当前无任何 IMPROVES_UPON 关联的方法（仍可尝试以根查询）
+        """
+        if self._driver is None:
+            await self.connect()
+        if self._driver is None:
+            return {"with_evolution": [], "other_methods": []}
+
+        with_evolution: List[Dict[str, Any]] = []
+        other_methods: List[Dict[str, Any]] = []
+
+        try:
+            async with self._driver.session() as session:
+                res1 = await session.run(
+                    """
+                    MATCH (m:Method)-[r:IMPROVES_UPON]-(:Method)
+                    WITH m, count(r) AS edge_count
+                    RETURN m.name AS name_key,
+                           coalesce(m.original_name, m.name) AS label,
+                           edge_count
+                    ORDER BY toLower(label)
+                    LIMIT 400
+                    """
+                )
+                for row in await res1.data():
+                    with_evolution.append(
+                        {
+                            "name_key": row["name_key"],
+                            "label": row["label"] or row["name_key"],
+                            "edge_count": int(row["edge_count"] or 0),
+                        }
+                    )
+
+                res2 = await session.run(
+                    """
+                    MATCH (m:Method)
+                    WHERE NOT (m)-[:IMPROVES_UPON]-(:Method)
+                    RETURN m.name AS name_key,
+                           coalesce(m.original_name, m.name) AS label
+                    ORDER BY toLower(label)
+                    LIMIT 120
+                    """
+                )
+                for row in await res2.data():
+                    other_methods.append(
+                        {
+                            "name_key": row["name_key"],
+                            "label": row["label"] or row["name_key"],
+                        }
+                    )
+
+            logger.info(
+                "Evolution method index: %s with edges, %s without",
+                len(with_evolution),
+                len(other_methods),
+            )
+        except Exception as e:
+            logger.error(f"Failed to list evolution methods: {e}")
+
+        return {"with_evolution": with_evolution, "other_methods": other_methods}
+
+    async def search_papers(
+        self,
+        query: str = "",
+        limit: int = 20,
+        offset: int = 0,
+        task_topic: str = "",
+    ) -> List[Dict[str, Any]]:
         """
         按主题/关键词检索已入库论文（用于"查 SRE 主题"这条主路径）。
 
@@ -651,20 +721,27 @@ class Neo4jClient:
         - Paper.title
         - Paper.core_problem
         - Proposed method original_name/name（可选）
+        - task_topic 非空时：仅保留 ADDRESSES 聚类标签与该字符串一致的论文
+          （与 get_library_stats.by_topic 的 topic 一致）
 
         全部使用参数化查询，避免注入。
         """
         q = (query or "").strip().lower()
+        tt = (task_topic or "").strip()
         if self._driver is None:
             await self.connect()
 
         cypher = """
         MATCH (p:Paper)
+        OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
+        WITH p, t
+        WHERE $task_topic = "" OR coalesce(t.original_name, t.name, '(未标注主题)') = $task_topic
+        WITH DISTINCT p
+        OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
         OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
         OPTIONAL MATCH (p)-[:WRITTEN_BY]->(a:Author)
         OPTIONAL MATCH (p)-[:EVALUATED_ON]->(d:Dataset)
         OPTIONAL MATCH (p)-[:MEASURES]->(mt:Metric)
-        OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
         OPTIONAL MATCH (m)-[:IMPROVES_UPON]->(baseline:Method)
         WITH p,
              collect(DISTINCT coalesce(m.original_name, m.name)) AS methods,
@@ -694,20 +771,33 @@ class Neo4jClient:
 
         try:
             async with self._driver.session() as session:
-                result = await session.run(cypher, q=q, limit=limit, offset=offset)
+                result = await session.run(
+                    cypher,
+                    q=q,
+                    task_topic=tt,
+                    limit=limit,
+                    offset=offset,
+                )
                 rows = await result.data()
             return rows
         except Exception as e:
             logger.error(f"Failed to search papers: {e}")
             return []
 
-    async def count_search_papers(self, query: str = "") -> int:
+    async def count_search_papers(
+        self, query: str = "", task_topic: str = ""
+    ) -> int:
         """与 search_papers 相同过滤条件，返回命中论文总数（分页用）。"""
         q = (query or "").strip().lower()
+        tt = (task_topic or "").strip()
         if self._driver is None:
             await self.connect()
         cypher = """
         MATCH (p:Paper)
+        OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
+        WITH p, t
+        WHERE $task_topic = "" OR coalesce(t.original_name, t.name, '(未标注主题)') = $task_topic
+        WITH DISTINCT p
         OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
         WITH p, collect(DISTINCT coalesce(m.original_name, m.name)) AS methods
         WHERE $q = "" OR toLower(coalesce(p.title,"")) CONTAINS $q
@@ -717,12 +807,80 @@ class Neo4jClient:
         """
         try:
             async with self._driver.session() as session:
-                result = await session.run(cypher, q=q)
+                result = await session.run(cypher, q=q, task_topic=tt)
                 row = await result.single()
                 return int(row["total"]) if row else 0
         except Exception as e:
             logger.error(f"Failed to count search papers: {e}")
             return 0
+
+    async def get_library_stats(self) -> Dict[str, Any]:
+        """
+        图库概览：论文数、作者规模、按萃取主题(Task)聚类的篇数。
+        """
+        if self._driver is None:
+            await self.connect()
+
+        out: Dict[str, Any] = {
+            "paper_count": 0,
+            "author_count": 0,
+            "papers_with_authors": 0,
+            "author_paper_links": 0,
+            "by_topic": [],
+        }
+
+        try:
+            async with self._driver.session() as session:
+                r1 = await session.run("MATCH (p:Paper) RETURN count(p) AS c")
+                rec1 = await r1.single()
+                out["paper_count"] = int(rec1["c"]) if rec1 and rec1.get("c") is not None else 0
+
+                r2 = await session.run("MATCH (a:Author) RETURN count(a) AS c")
+                rec2 = await r2.single()
+                out["author_count"] = int(rec2["c"]) if rec2 and rec2.get("c") is not None else 0
+
+                r3 = await session.run(
+                    """
+                    MATCH (p:Paper)-[:WRITTEN_BY]->(:Author)
+                    RETURN count(DISTINCT p) AS c
+                    """
+                )
+                rec3 = await r3.single()
+                out["papers_with_authors"] = int(rec3["c"]) if rec3 and rec3.get("c") is not None else 0
+
+                r4 = await session.run(
+                    """
+                    MATCH (:Paper)-[r:WRITTEN_BY]->(:Author)
+                    RETURN count(r) AS c
+                    """
+                )
+                rec4 = await r4.single()
+                out["author_paper_links"] = int(rec4["c"]) if rec4 and rec4.get("c") is not None else 0
+
+                r5 = await session.run(
+                    """
+                    MATCH (p:Paper)
+                    OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
+                    WITH coalesce(t.original_name, t.name, '(未标注主题)') AS topic, p
+                    RETURN topic,
+                           count(DISTINCT p) AS paper_count,
+                           min(p.arxiv_id) AS sample_arxiv_id
+                    ORDER BY paper_count DESC
+                    """
+                )
+                rows = await r5.data()
+                out["by_topic"] = [
+                    {
+                        "topic": row["topic"],
+                        "paper_count": int(row["paper_count"]),
+                        "sample_arxiv_id": row.get("sample_arxiv_id"),
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Failed to get library stats: {e}")
+
+        return out
 
     async def get_paper_by_id(self, arxiv_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -739,6 +897,7 @@ class Neo4jClient:
 
         cypher = """
         MATCH (p:Paper {arxiv_id: $arxiv_id})
+        OPTIONAL MATCH (p)-[:WRITTEN_BY]->(a:Author)
         OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
         OPTIONAL MATCH (p)-[:HAS_INNOVATION]->(i:Innovation)
         OPTIONAL MATCH (p)-[:HAS_LIMITATION]->(l:Limitation)
@@ -753,6 +912,7 @@ class Neo4jClient:
           p.published_date AS published_date,
           p.core_problem AS core_problem,
           p.summary AS summary,
+          collect(DISTINCT coalesce(a.original_name, a.name)) AS authors,
           collect(DISTINCT {
             name: coalesce(m.original_name, m.name),
             description: m.description
@@ -776,6 +936,7 @@ class Neo4jClient:
             row = rows[0]
             # 提取方法名称列表
             method_names = [m["name"] for m in row["methods"] if m.get("name")]
+            author_list = [x for x in row.get("authors") or [] if x]
 
             return {
                 "arxiv_id": row["arxiv_id"],
@@ -783,7 +944,7 @@ class Neo4jClient:
                 "published_date": row.get("published_date", ""),
                 "core_problem": row.get("core_problem", ""),
                 "summary": row.get("summary", ""),
-                "authors": [],  # 作者信息可能需要单独存储或从其他来源获取
+                "authors": author_list,
                 "proposed_method": method_names[0] if method_names else "",
                 "innovations": [i for i in row["innovations"] if i],
                 "limitations": [l for l in row["limitations"] if l],
@@ -796,6 +957,26 @@ class Neo4jClient:
         except Exception as e:
             logger.error(f"Failed to get paper by id: {e}")
             return None
+
+    async def wipe_all_graph_data(self) -> Dict[str, int]:
+        """
+        删除当前 Neo4j 库中全部节点与关系（DETACH DELETE）。
+
+        仅应由受保护的管理员接口调用。
+        """
+        if self._driver is None:
+            await self.connect()
+        if self._driver is None:
+            raise RuntimeError("Neo4j driver not available")
+
+        async with self._driver.session() as session:
+            count_result = await session.run("MATCH (n) RETURN count(n) AS c")
+            rec = await count_result.single()
+            n_before = int(rec["c"]) if rec and rec.get("c") is not None else 0
+            await session.run("MATCH (n) DETACH DELETE n")
+
+        logger.warning("Neo4j wiped: removed %s nodes (and their relationships)", n_before)
+        return {"nodes_deleted": n_before}
 
 
 # 单例实例

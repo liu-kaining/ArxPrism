@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.admin_routes import router as admin_router
+from src.api.arxiv_routes import router as arxiv_router
 from src.api.routes import router as api_router
 from src.api.task_routes import router as task_router
 from src.core.config import settings
@@ -106,12 +108,14 @@ app.add_middleware(
 # Include API routes
 app.include_router(api_router)
 app.include_router(task_router)
+app.include_router(arxiv_router)
+app.include_router(admin_router)
 
 
-@app.get("/health")
+@app.get("/health", tags=["system"])
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "arxprism"}
+    """Public heartbeat endpoint for container healthcheck."""
+    return {"status": "ok", "message": "ArxPrism API is running"}
 
 
 @app.get("/")

@@ -267,15 +267,25 @@ async def _execute_task_pipeline(
         await task_manager.start_task(task_id)
 
         # 抓取论文 (使用领域预设优化查询)
-        papers = await arxiv_radar.fetch_recent_papers(
+        papers, fetch_stats = await arxiv_radar.fetch_recent_papers_with_stats(
             query=query,
             max_results=max_results,
-            domain_preset=domain_preset
+            domain_preset=domain_preset,
         )
 
         if not papers:
-            logger.warning(f"Task {task_id}: No papers found")
-            await task_manager.complete_task(task_id)
+            if fetch_stats.search_hits == 0:
+                summary = (
+                    "arXiv 检索命中 0 篇：关键词与当前领域预设组合后可能没有匹配，"
+                    "或 API 暂无结果。可换关键词、改用「自定义」预设，或稍后再试。"
+                )
+            else:
+                summary = (
+                    f"arXiv 命中 {fetch_stats.search_hits} 篇，但去重（已在库）、"
+                    f"领域分诊或全文抓取后没有可入库的新篇。详见运行 Worker/API 的日志（skipping / triage）。"
+                )
+            logger.warning("Task %s: no papers to process (hits=%s)", task_id, fetch_stats.search_hits)
+            await task_manager.complete_task(task_id, completion_summary=summary)
             return
 
         # 更新总论文数
