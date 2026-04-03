@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import { evolutionApi } from "@/lib/api/client";
+import { evolutionApi, type EvolutionTreeLink } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -17,11 +17,6 @@ interface EvolutionNode {
   generation: number;
 }
 
-interface EvolutionLink {
-  source: string;
-  target: string;
-}
-
 function EvolutionPageContent() {
   const searchParams = useSearchParams();
   const initialMethod = searchParams.get("method") || "";
@@ -29,7 +24,7 @@ function EvolutionPageContent() {
   const [methodName, setMethodName] = useState(initialMethod);
   const [isLoading, setIsLoading] = useState(false);
   const [nodes, setNodes] = useState<EvolutionNode[]>([]);
-  const [links, setLinks] = useState<EvolutionLink[]>([]);
+  const [links, setLinks] = useState<EvolutionTreeLink[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const searchEvolution = async (method: string) => {

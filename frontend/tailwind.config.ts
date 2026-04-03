@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
+  darkMode: "class",
   content: [
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -9,6 +10,11 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        "brand-task": "#f59e0b",
+        "brand-method": "#06b6d4",
+        "brand-paper": "#f87171",
+        "brand-graph": "#020617",
+        "brand-graph-pane": "#020617",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

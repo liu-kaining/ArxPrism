@@ -18,6 +18,7 @@ import {
   type EvolutionApiNode,
 } from "@/lib/graph/evolutionFlow";
 import { evolutionNodeTypes } from "./graphNodes";
+import { evolutionEdgeTypes } from "./EvolutionHoverEdge";
 
 function FitView({ layoutKey }: { layoutKey: string }) {
   const { fitView } = useReactFlow();
@@ -47,7 +48,11 @@ function evolutionDataSignature(
     .map((n) => `${n.id}\u0000${n.generation}\u0000${n.name}`)
     .join("\u0001");
   const linkPart = links
-    .map((l, i) => `${l.source}\u0000${l.target}\u0000${i}`)
+    .map((l, i) => {
+      const m = (l.metrics ?? []).join("\u0004");
+      const ds = (l.datasets ?? []).join("\u0004");
+      return `${l.source}\u0000${l.target}\u0000${i}\u0000${l.relationshipType ?? ""}\u0000${m}\u0000${ds}`;
+    })
     .join("\u0002");
   return `${height}\u0003${nodePart}\u0003${linkPart}`;
 }
@@ -91,18 +96,19 @@ function EvolutionGraphInner({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={evolutionNodeTypes}
+        edgeTypes={evolutionEdgeTypes}
         minZoom={0.1}
         maxZoom={1.4}
         proOptions={{ hideAttribution: true }}
-        className="bg-muted/20"
+        className="bg-brand-graph-pane"
         style={{ width: innerWidth, height }}
       >
         <Background gap={16} size={1} />
         <Controls showInteractive={false} position="bottom-right" />
         {showMiniMap ? (
           <MiniMap
-            className="!bg-card"
-            maskColor="hsl(var(--background) / 0.65)"
+            className="!bg-slate-900 !border-slate-700"
+            maskColor="rgba(15, 23, 42, 0.75)"
           />
         ) : null}
         <FitView layoutKey={layoutKey} />
@@ -124,7 +130,10 @@ export function EvolutionGraphView({
   if (!mounted) {
     return (
       <div
-        className={cn("w-full animate-pulse rounded-lg bg-muted", className)}
+        className={cn(
+          "w-full animate-pulse rounded-lg border border-slate-800 bg-slate-900",
+          className
+        )}
         style={{ height }}
         aria-hidden
       />
@@ -133,7 +142,10 @@ export function EvolutionGraphView({
 
   return (
     <div
-      className={cn("w-full overflow-hidden rounded-lg border", className)}
+      className={cn(
+        "w-full overflow-hidden rounded-lg border border-slate-800 bg-slate-950",
+        className
+      )}
       style={{ height }}
     >
       <ReactFlowProvider>

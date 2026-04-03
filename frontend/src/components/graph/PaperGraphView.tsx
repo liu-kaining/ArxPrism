@@ -17,7 +17,7 @@ import {
   type ApiGraphNode,
   type ApiGraphRel,
 } from "@/lib/graph/paperGraphFlow";
-import { paperGraphNodeTypes } from "./graphNodes";
+import { commandCenterNodeTypes } from "./graphNodes";
 
 function FitView({ layoutKey }: { layoutKey: string }) {
   const { fitView } = useReactFlow();
@@ -82,19 +82,19 @@ function PaperGraphInner({
       edges={edges}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
-      nodeTypes={paperGraphNodeTypes}
+      nodeTypes={commandCenterNodeTypes}
       minZoom={0.12}
       maxZoom={1.5}
       proOptions={{ hideAttribution: true }}
-      className="bg-muted/20"
+      className="bg-brand-graph-pane"
       style={{ width: "100%", height }}
     >
       <Background gap={14} size={1} />
       <Controls showInteractive={false} position="bottom-right" />
       {showMiniMap ? (
         <MiniMap
-          className="!bg-card"
-          maskColor="hsl(var(--background) / 0.65)"
+          className="!bg-slate-900 !border-slate-700"
+          maskColor="rgba(15, 23, 42, 0.75)"
         />
       ) : null}
       <FitView layoutKey={layoutKey} />
@@ -115,7 +115,10 @@ export function PaperGraphView({
   if (!mounted) {
     return (
       <div
-        className={cn("w-full animate-pulse rounded-lg bg-muted", className)}
+        className={cn(
+          "w-full animate-pulse rounded-lg border border-slate-800 bg-slate-900",
+          className
+        )}
         style={{ height }}
         aria-hidden
       />
@@ -124,7 +127,10 @@ export function PaperGraphView({
 
   return (
     <div
-      className={cn("w-full overflow-hidden rounded-lg border", className)}
+      className={cn(
+        "w-full overflow-hidden rounded-lg border border-slate-800 bg-slate-950",
+        className
+      )}
       style={{ height }}
     >
       <ReactFlowProvider>
