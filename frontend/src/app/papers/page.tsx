@@ -18,16 +18,12 @@ export default function PapersPage() {
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
+  /** 空关键词 = 展示库内全部论文（与 GET /api/v1/papers?query= 一致） */
   const searchPapers = async (searchQuery: string, offset: number = 0) => {
-    if (!searchQuery.trim()) {
-      setPapers([]);
-      return;
-    }
-
     setIsLoading(true);
     try {
       const result = await paperApi.searchPapers({
-        query: searchQuery,
+        query: searchQuery.trim(),
         limit: pageSize,
         offset,
       });
@@ -47,10 +43,7 @@ export default function PapersPage() {
   };
 
   useEffect(() => {
-    // 加载默认搜索结果
-    if (!query) {
-      searchPapers("site reliability engineering", 0);
-    }
+    searchPapers("", 0);
   }, []);
 
   return (
@@ -75,7 +68,7 @@ export default function PapersPage() {
             <div className="relative flex-1">
               <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <Input
-                placeholder="搜索论文标题、作者或内容..."
+                placeholder="搜索标题、摘要问题、方法名… 留空则显示全部已入库论文"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="pl-12 h-12 rounded-xl"
@@ -136,8 +129,11 @@ export default function PapersPage() {
                   <div className="flex items-center gap-4 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1.5">
                       <User className="w-3.5 h-3.5" />
-                      {paper.authors.slice(0, 2).join(", ")}
-                      {paper.authors.length > 2 && " et al."}
+                      {paper.authors.length > 0
+                        ? `${paper.authors.slice(0, 2).join(", ")}${
+                            paper.authors.length > 2 ? " et al." : ""
+                          }`
+                        : "—"}
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Calendar className="w-3.5 h-3.5" />
@@ -235,10 +231,10 @@ export default function PapersPage() {
               <FileText className="w-8 h-8 text-muted-foreground" />
             </div>
             <p className="text-muted-foreground text-lg">
-              {query ? "未找到相关论文" : "输入关键词搜索论文"}
+              {query.trim() ? "未找到相关论文" : "图库中暂无论文"}
             </p>
             <p className="text-sm text-muted-foreground/70 mt-2">
-              尝试使用英文关键词，如 "site reliability engineering"
+              可先运行采集任务写入 Neo4j，或换关键词再搜
             </p>
           </CardContent>
         </Card>

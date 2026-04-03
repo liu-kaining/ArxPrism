@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { paperApi } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
@@ -10,6 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Search, Filter, Network } from "lucide-react";
 import toast from "react-hot-toast";
+import { PaperGraphView } from "@/components/graph/PaperGraphView";
+import { GRAPH_LABEL_COLORS } from "@/lib/graph/paperGraphFlow";
 
 interface GraphNode {
   id: string;
@@ -67,33 +69,27 @@ function GraphPageContent() {
     }
   }, [paperId]);
 
-  // Get unique node types
-  const nodeTypes = Array.from(new Set(nodes.flatMap((n) => n.labels || [])));
+  const nodeTypes = useMemo(
+    () => Array.from(new Set(nodes.flatMap((n) => n.labels || []))),
+    [nodes]
+  );
 
-  // Filter nodes
-  const filteredNodes =
-    nodeTypeFilter === "all"
+  const filteredNodes = useMemo(() => {
+    return nodeTypeFilter === "all"
       ? nodes
       : nodes.filter((n) => n.labels?.includes(nodeTypeFilter));
+  }, [nodes, nodeTypeFilter]);
 
-  // Get filtered relationships (only those between filtered nodes)
-  const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
-  const filteredRelationships = relationships.filter(
-    (r) => filteredNodeIds.has(r.start) && filteredNodeIds.has(r.end)
-  );
+  const filteredRelationships = useMemo(() => {
+    const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
+    return relationships.filter(
+      (r) => filteredNodeIds.has(r.start) && filteredNodeIds.has(r.end)
+    );
+  }, [relationships, filteredNodes]);
 
   const getNodeColor = (labels: string[] | undefined) => {
     const label = labels?.[0] || "Unknown";
-    const colors: Record<string, string> = {
-      Paper: "#ff6b6b",
-      Method: "#4ecdc4",
-      Author: "#45b7d1",
-      Dataset: "#f7b731",
-      Metric: "#a55eea",
-      Innovation: "#778ca3",
-      Limitation: "#778ca3",
-    };
-    return colors[label] || "#95a5a6";
+    return GRAPH_LABEL_COLORS[label] || "#95a5a6";
   };
 
   return (
@@ -206,46 +202,17 @@ function GraphPageContent() {
                 图谱可视化
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              {/* Placeholder for React Flow */}
-              <div className="border rounded-lg min-h-[500px] bg-muted/50 flex items-center justify-center">
-                <div className="text-center">
-                  <p className="text-muted-foreground mb-4">
-                    交互式图谱 (开发中)
-                  </p>
-                  <p className="text-sm text-muted-foreground mb-8">
-                    显示 {filteredNodes.length} 个节点，{filteredRelationships.length} 条关系
-                  </p>
-
-                  {/* Simple node list */}
-                  <div className="max-w-md mx-auto text-left">
-                    {filteredNodes.slice(0, 10).map((node) => (
-                      <div
-                        key={node.id}
-                        className="flex items-center gap-2 py-1"
-                      >
-                        <div
-                          className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: getNodeColor(node.labels) }}
-                        />
-                        <span className="text-sm truncate flex-1">
-                          {node.properties.original_name ||
-                            node.properties.title ||
-                            node.id}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {node.labels?.[0]}
-                        </span>
-                      </div>
-                    ))}
-                    {filteredNodes.length > 10 && (
-                      <p className="text-xs text-muted-foreground text-center mt-2">
-                        还有 {filteredNodes.length - 10} 个节点...
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
+            <CardContent className="pt-0">
+              <p className="text-sm text-muted-foreground mb-3">
+                可拖拽画布、缩放；共 {filteredNodes.length} 个节点、
+                {filteredRelationships.length} 条关系
+              </p>
+              <PaperGraphView
+                graphNodes={filteredNodes}
+                relationships={filteredRelationships}
+                height={520}
+                showMiniMap
+              />
             </CardContent>
           </Card>
         </div>

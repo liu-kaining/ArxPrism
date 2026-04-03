@@ -22,9 +22,13 @@ import {
   Wrench,
   Sparkles,
   Download,
+  Copy,
+  FileText,
 } from "lucide-react";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import toast from "react-hot-toast";
+import { PaperGraphView } from "@/components/graph/PaperGraphView";
+import { EMPTY_GRAPH_RELATIONSHIPS } from "@/lib/graph/paperGraphFlow";
 
 interface GraphData {
   nodes: any[];
@@ -46,10 +50,12 @@ export default function PaperDetailPage() {
       setError(null);
 
       try {
-        // getPaperDetail 已经返回 paper 和 graph 数据
-        const paperDetail = await paperApi.getPaperDetail(arxivId);
+        const [paperDetail, graph] = await Promise.all([
+          paperApi.getPaperDetail(arxivId),
+          paperApi.getPaperGraph(arxivId),
+        ]);
         setPaper(paperDetail.paper);
-        setGraphData(paperDetail.graph);
+        setGraphData(graph);
       } catch (err) {
         setError(String(err));
         toast.error("加载论文详情失败");
@@ -84,6 +90,18 @@ export default function PaperDetailPage() {
     );
   }
 
+  const absUrl = `https://arxiv.org/abs/${arxivId}`;
+  const pdfUrl = `https://arxiv.org/pdf/${arxivId}.pdf`;
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`已复制${label}`);
+    } catch {
+      toast.error("复制失败");
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -93,38 +111,110 @@ export default function PaperDetailPage() {
             <ArrowLeft className="w-5 h-5" />
           </Button>
         </Link>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0 space-y-4">
           <h1 className="text-3xl font-bold leading-tight">{paper.title}</h1>
-          <div className="flex items-center gap-4 mt-3 text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <User className="w-4 h-4" />
-              {paper.authors?.join(", ")}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
+            <span className="flex items-center gap-1.5 min-w-0">
+              <User className="w-4 h-4 shrink-0" />
+              <span className="truncate">
+                {paper.authors?.length
+                  ? paper.authors.join(", ")
+                  : "作者未从图谱抽取"}
+              </span>
             </span>
-            <span className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5 shrink-0">
               <Calendar className="w-4 h-4" />
               {formatDate(paper.published_date)}
             </span>
-            <a
-              href={`https://arxiv.org/abs/${arxivId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Button variant="ghost" size="sm" className="rounded-lg">
-                <ExternalLink className="w-4 h-4 mr-1" />
-                arXiv
-              </Button>
-            </a>
-            <a
-              href={`https://arxiv.org/pdf/${arxivId}.pdf`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Button variant="ghost" size="sm" className="rounded-lg">
-                <Download className="w-4 h-4 mr-1" />
-                PDF
-              </Button>
-            </a>
+            <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
+              arXiv:{arxivId}
+            </span>
           </div>
+
+          {/* 高亮：官方页面 + PDF，避免与灰色元信息混在一起看不清 */}
+          <Card className="border-2 border-sky-500/40 bg-gradient-to-br from-sky-500/[0.12] via-background to-background shadow-md">
+            <CardContent className="pt-5 pb-5">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <div>
+                  <p className="text-base font-semibold text-sky-900 dark:text-sky-100">
+                    原文地址与 PDF
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    在 arXiv 打开论文页，或直接下载官方 PDF（新标签页）
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-3 sm:mt-0">
+                  <a
+                    href={absUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex"
+                  >
+                    <Button
+                      size="lg"
+                      className="rounded-xl gap-2 font-semibold shadow-sm"
+                    >
+                      <ExternalLink className="w-5 h-5" />
+                      打开 arXiv 页面
+                    </Button>
+                  </a>
+                  <a
+                    href={pdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex"
+                  >
+                    <Button
+                      size="lg"
+                      variant="secondary"
+                      className="rounded-xl gap-2 font-semibold border-2 border-sky-500/40 shadow-sm"
+                    >
+                      <Download className="w-5 h-5" />
+                      下载 PDF
+                    </Button>
+                  </a>
+                </div>
+              </div>
+              <div className="mt-4 space-y-2 rounded-lg border bg-muted/40 p-3">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                  <span className="text-xs font-medium text-muted-foreground shrink-0 w-28">
+                    Abs 链接
+                  </span>
+                  <code className="flex-1 break-all text-xs sm:text-sm text-foreground">
+                    {absUrl}
+                  </code>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 gap-1"
+                    onClick={() => copyText(absUrl, "Abs 链接")}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    复制
+                  </Button>
+                </div>
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                  <span className="text-xs font-medium text-muted-foreground shrink-0 w-28">
+                    PDF 直链
+                  </span>
+                  <code className="flex-1 break-all text-xs sm:text-sm text-foreground">
+                    {pdfUrl}
+                  </code>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 gap-1"
+                    onClick={() => copyText(pdfUrl, "PDF 链接")}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    复制
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
 
@@ -132,6 +222,25 @@ export default function PaperDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 stagger-children">
         {/* Left Column: Paper Details */}
         <div className="lg:col-span-2 space-y-6">
+          {/* arXiv 摘要（入库时写入 Neo4j，非全文；全文请用上方 PDF） */}
+          {paper.summary?.trim() ? (
+            <Card className="border-0 shadow-lg overflow-hidden">
+              <CardHeader className="pb-3 bg-gradient-to-r from-violet-500/10 to-transparent">
+                <CardTitle className="flex items-center gap-3 text-lg">
+                  <div className="w-10 h-10 rounded-xl bg-violet-500/15 flex items-center justify-center">
+                    <FileText className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+                  </div>
+                  arXiv 摘要
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-base leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                  {paper.summary.trim()}
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {/* Core Problem */}
           {paper.core_problem && (
             <Card className="border-0 shadow-lg overflow-hidden">
@@ -355,15 +464,15 @@ export default function PaperDetailPage() {
                     </div>
                   </div>
 
-                  {/* Graph Placeholder */}
-                  <div className="aspect-square bg-gradient-to-br from-muted to-muted/50 rounded-xl flex items-center justify-center">
-                    <div className="text-center">
-                      <Sparkles className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
-                      <p className="text-muted-foreground text-sm">
-                        图谱预览 (开发中)
-                      </p>
-                    </div>
-                  </div>
+                  <PaperGraphView
+                    graphNodes={graphData.nodes}
+                    relationships={
+                      graphData.relationships ?? EMPTY_GRAPH_RELATIONSHIPS
+                    }
+                    height={300}
+                    showMiniMap={false}
+                    className="border-0 shadow-none"
+                  />
 
                   <Link href={`/graph?paper=${arxivId}`} className="block">
                     <Button className="w-full rounded-xl">

@@ -560,11 +560,11 @@ class Neo4jClient:
                             })
                             seen_methods.add(ancestor["name"])
 
-                        # Link ancestor to target
-                        if ancestor:
+                        # Link ancestor → target (IDs 必须与节点 id 一致：归一化 name)
+                        if ancestor and target:
                             links.append({
                                 "source": ancestor["name"],
-                                "target": method_name
+                                "target": target["name"],
                             })
 
                     # Add descendants (positive generations, going forward)
@@ -577,11 +577,11 @@ class Neo4jClient:
                             })
                             seen_methods.add(descendant["name"])
 
-                        # Link target to descendant
-                        if descendant:
+                        # Link target → descendant
+                        if descendant and target:
                             links.append({
-                                "source": method_name,
-                                "target": descendant["name"]
+                                "source": target["name"],
+                                "target": descendant["name"],
                             })
 
                 logger.info(f"Evolution tree: {len(nodes)} nodes, {len(links)} links")

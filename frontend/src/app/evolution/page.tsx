@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Search, GitBranch } from "lucide-react";
 import toast from "react-hot-toast";
+import { EvolutionGraphView } from "@/components/graph/EvolutionGraphView";
 
 interface EvolutionNode {
   id: string;
@@ -138,43 +139,16 @@ function EvolutionPageContent() {
               </div>
             </div>
 
-            {/* Tree Visualization Placeholder */}
-            <div className="border rounded-lg p-8 min-h-[400px] bg-muted/50">
-              <div className="flex flex-col items-center justify-center h-full">
-                <p className="text-muted-foreground text-center mb-4">
-                  进化树可视化 (开发中)
-                </p>
-                {/* 简单的文字树状展示 */}
-                <div className="font-mono text-sm">
-                  {nodes
-                    .sort((a, b) => a.generation - b.generation)
-                    .map((node) => (
-                      <div
-                        key={node.id}
-                        className="flex items-center gap-2"
-                        style={{ paddingLeft: `${(node.generation + 5) * 16}px` }}
-                      >
-                        {node.generation !== 0 && (
-                          <span className="text-muted-foreground">└─</span>
-                        )}
-                        <span
-                          className={
-                            node.generation === 0
-                              ? "font-bold text-primary"
-                              : node.generation < 0
-                              ? "text-muted-foreground"
-                              : "text-foreground"
-                          }
-                        >
-                          {node.name}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          (G{node.generation})
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              </div>
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                按代数分列：左侧为祖先，中间为目标方法，右侧为改进该方法的后继；可横向滚动宽图。
+              </p>
+              <EvolutionGraphView
+                nodes={nodes}
+                links={links}
+                height={440}
+                showMiniMap
+              />
             </div>
 
             {/* Node List */}

@@ -56,8 +56,8 @@ class Settings(BaseSettings):
     arxiv_rate_limit_delay: float = 3.0  # arXiv 君子协定: 3秒间隔
     arxiv_min_content_length: int = 500  # 最小内容长度阈值
 
-    # PDF 存储配置
-    pdf_storage_path: str = "/data/papers"  # PDF 文件本地存储路径
+    # PDF 存储配置（须对运行用户可写；/data/papers 在 Docker 非 root 用户下会 Permission denied）
+    pdf_storage_path: str = "/tmp/arxprism-papers"
 
     # Cloudflare R2 对象存储配置 (用于存储论文 PDF)
     r2_enabled: bool = False  # 是否启用 R2 存储

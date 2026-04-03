@@ -32,18 +32,29 @@ export default function TaskDetailPage() {
     resumeTask,
     cancelTask,
     retryTask,
-    isLoading,
+    taskDetailLoading,
   } = useTaskStore();
 
+  // 必须用 focusDetail，否则 store 里 refreshCurrent 为 false，永远不会写入 currentTask
   useEffect(() => {
-    fetchTask(taskId);
+    if (taskId) {
+      fetchTask(taskId, { focusDetail: true });
+    }
+  }, [taskId, fetchTask]);
+
+  useEffect(() => {
+    if (!taskId) return;
     const interval = setInterval(() => {
-      if (currentTask?.status === "running" || currentTask?.status === "pending") {
+      const t = useTaskStore.getState().currentTask;
+      if (
+        t?.task_id === taskId &&
+        (t.status === "running" || t.status === "pending")
+      ) {
         fetchTask(taskId);
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [taskId, currentTask?.status, fetchTask]);
+  }, [taskId, fetchTask]);
 
   const handlePause = async () => {
     try {
@@ -82,7 +93,7 @@ export default function TaskDetailPage() {
     }
   };
 
-  if (isLoading && !currentTask) {
+  if (taskDetailLoading || (currentTask && currentTask.task_id !== taskId)) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-12 w-64" />
