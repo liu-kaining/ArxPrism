@@ -209,6 +209,15 @@ async def _process_paper_async(
             result.is_relevant = False
             return result
 
+        if extraction.extraction_data is None:
+            logger.warning(
+                f"Paper {paper_id}: is_relevant_to_domain but extraction_data is missing"
+            )
+            result.status = PaperProcessingStatus.FAILED
+            result.message = "LLM omitted extraction_data for a domain-relevant paper"
+            result.is_relevant = True
+            return result
+
         # Step 4: 写入 Neo4j (异步)
         logger.info(f"Paper {paper_id}: Upserting to Neo4j graph...")
         upsert_success = await neo4j_client.upsert_paper_graph(extraction)

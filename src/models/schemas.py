@@ -174,12 +174,27 @@ class CriticalAnalysis(BaseModel):
     )
 
 
+class TriageResponse(BaseModel):
+    """轻量级领域分诊（标题+摘要），用于在下载全文前过滤无关论文以节约 Token。"""
+
+    is_relevant: bool = Field(
+        description="是否属于计算机系统/SRE/云原生/后端架构/AI 基础设施等指定工程领域"
+    )
+    reason: str = Field(description="一句话判定理由")
+
+
 class ExtractionData(BaseModel):
     """论文萃取的核心数据."""
 
     core_problem: str = Field(
         default="NOT_MENTIONED",
         description="一句话总结要解决的底层痛点"
+    )
+    task_name: str = Field(
+        default="NOT_MENTIONED",
+        description=(
+            "该论文要解决的核心任务专有名词，如 'Root Cause Analysis', 'Log Anomaly Detection'"
+        ),
     )
     proposed_method: ProposedMethod
     knowledge_graph_nodes: KnowledgeGraphNodes
@@ -200,7 +215,13 @@ class PaperExtractionResponse(BaseModel):
     title: str = Field(description="论文英文标题")
     authors: List[str] = Field(default_factory=list, description="作者列表")
     publication_date: str = Field(description="发布日期 YYYY-MM-DD")
-    extraction_data: ExtractionData
+    extraction_data: Optional[ExtractionData] = Field(
+        default=None,
+        description=(
+            "论文萃取结构化数据；当 is_relevant_to_domain 为 false 时 LLM 可省略该字段，"
+            "不得因此触发校验失败"
+        ),
+    )
 
 
 # =============================================================================

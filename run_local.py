@@ -105,6 +105,14 @@ async def process_single_paper(
         print_warning("论文不属于 SRE/云原生/AIOps 领域，已跳过")
         return {"status": "skipped", "paper_id": paper.arxiv_id, "reason": "domain_not_relevant"}
 
+    if extraction.extraction_data is None:
+        print_warning("领域相关但未返回 extraction_data，无法写入图谱")
+        return {
+            "status": "failed",
+            "paper_id": paper.arxiv_id,
+            "reason": "missing_extraction_data",
+        }
+
     # 打印萃取结果摘要
     method_name = extraction.extraction_data.proposed_method.name
     baselines = extraction.extraction_data.knowledge_graph_nodes.baselines_beaten

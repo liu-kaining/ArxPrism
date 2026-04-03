@@ -20,7 +20,7 @@ from openai import AsyncOpenAI, RateLimitError, APITimeoutError
 from pydantic import ValidationError
 
 from src.core.config import settings
-from src.models.schemas import PaperExtractionResponse
+from src.models.schemas import PaperExtractionResponse, TriageResponse
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,8 @@ USER_PROMPT_TEMPLATE = """请基于 System Prompt 中的指令和严格的 JSON 
 
   "extraction_data": {{
     "core_problem": "用 1-2 句话，极其精准地概括这篇论文要解决的【底层痛点】。必须切中要害，说明为什么现有的方法不够好。",
+
+    "task_name": "提炼该论文要解决的核心任务专有名词（英文短语），如 Root Cause Analysis、Log Anomaly Detection；若无法概括则 NOT_MENTIONED",
 
     "proposed_method": {{
       "name": "论文提出的核心模型、架构或算法的名称（通常有缩写，如 STRATUS, AMER-RCL, FaithLog）。如果未命名，提炼一个能概括其核心特征的极简短语。",
@@ -96,6 +98,65 @@ class LLMExtractor:
         self.model = settings.llm_model
         self.max_tokens = settings.llm_max_tokens
         self.temperature = settings.llm_temperature
+
+    async def triage_paper(self, title: str, abstract: str) -> bool:
+        """
+        分诊台：仅根据标题与摘要判断是否值得下载全文并做深度萃取。
+
+        失败时 fail-open 返回 True，避免因 LLM 抖动误杀全部流量。
+        """
+        triage_system = (
+            "你是一个严格的学术审稿助手。只根据给出的论文标题与摘要判断："
+            "该工作是否属于计算机系统、SRE、云原生、微服务、分布式系统、后端架构、"
+            "AIOps、可观测性、日志/链路分析、AI 基础设施（训练/推理系统工程）等相关工程领域。"
+            "若是纯 CV/纯 NLP 应用且与系统可靠性无关、纯医学/物理/社科等，则判为不相关。"
+            "你必须只输出一个 JSON 对象，字段 is_relevant (boolean) 与 reason (string)。"
+        )
+        user_payload = (
+            f"标题:\n{title}\n\n摘要:\n{(abstract or '').strip()}\n\n"
+            "请输出 JSON: {\"is_relevant\": true/false, \"reason\": \"...\"}"
+        )
+        last_err = ""
+        triage_max_tokens = 256
+        triage_retries = 2
+
+        for attempt in range(1, triage_retries + 1):
+            try:
+                resp = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": triage_system},
+                        {"role": "user", "content": user_payload},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.1,
+                    max_tokens=triage_max_tokens,
+                )
+                raw = resp.choices[0].message.content
+                if not raw:
+                    raise ValueError("empty triage response")
+                parsed = TriageResponse.model_validate_json(raw)
+                logger.info(
+                    f"Triage: is_relevant={parsed.is_relevant} reason={parsed.reason[:120]!r}"
+                )
+                return parsed.is_relevant
+            except (json.JSONDecodeError, ValidationError, ValueError) as e:
+                last_err = str(e)
+                logger.warning(f"Triage attempt {attempt}/{triage_retries} parse/validate failed: {e}")
+            except (RateLimitError, APITimeoutError) as e:
+                last_err = str(e)
+                logger.warning(f"Triage attempt {attempt}/{triage_retries} API error: {e}")
+            except Exception as e:
+                last_err = str(e)
+                logger.error(f"Triage attempt {attempt}/{triage_retries} unexpected: {e}")
+
+            if attempt < triage_retries:
+                await asyncio.sleep(self.base_delay * attempt)
+
+        logger.warning(
+            f"Triage failed after {triage_retries} attempts ({last_err}); fail-open -> proceed"
+        )
+        return True
 
     async def extract(
         self,

@@ -2,7 +2,8 @@
 arXiv Radar Service
 
 使用 arxiv 包实现异步论文抓取。
-优先下载并解析 PDF，失败时才回退到 HTML 或 summary。
+**HTML-First**：优先解析 arXiv HTML 实验版正文；PDF 仅作兜底（减轻双栏错位幻觉）。
+摘要分诊 (Triage)：下载全文前用 LLM 基于标题+摘要过滤非目标领域，节约 Token。
 实现幂等性检查、速率限制、内容长度校验。
 
 防线3: 论文首尾截断算法 - 解决长文本 Token 爆炸和注意力丢失问题
@@ -27,6 +28,7 @@ from bs4 import BeautifulSoup
 from src.core.config import settings
 from src.database.neo4j_client import neo4j_client
 from src.models.task_models import get_domain_preset, DomainPreset
+from src.services.llm_extractor import get_llm_extractor
 from src.services.r2_storage import get_r2_storage
 
 logger = logging.getLogger(__name__)
@@ -226,10 +228,7 @@ class ArxivRadar:
         """
         获取论文内容前先检查是否已存在 (幂等性).
 
-        内容获取优先级:
-        1. PDF 下载 + PyMuPDF 解析
-        2. HTML 页面解析
-        3. arXiv summary 兜底
+        内容获取优先级（见 _fetch_paper_content）: HTML-First，PDF 兜底，summary 最后。
 
         Args:
             paper: arxiv.Result object
@@ -251,7 +250,18 @@ class ArxivRadar:
         # Step 2: Rate limiting (arXiv 君子协定)
         await asyncio.sleep(self.rate_limit_delay)
 
-        # Step 3: 尝试获取内容 (PDF -> HTML -> Summary)
+        # Step 2b: LLM 分诊（标题+摘要），不相关则绝不下载 PDF/HTML 全文
+        abstract = getattr(paper, "summary", "") or ""
+        try:
+            is_relevant = await get_llm_extractor().triage_paper(paper.title, abstract)
+        except Exception as e:
+            logger.warning(f"Triage raised for {arxiv_id}, fail-open: {e}")
+            is_relevant = True
+        if not is_relevant:
+            logger.info(f"Triage rejected: {arxiv_id}")
+            return None
+
+        # Step 3: 尝试获取全文 (HTML-First -> PDF 兜底 -> Summary)
         content = await self._fetch_paper_content(paper)
         return content
 
@@ -262,7 +272,7 @@ class ArxivRadar:
         """
         获取论文内容，按优先级尝试不同来源.
 
-        优先级: PDF > HTML > Summary
+        优先级: **HTML-First** > PDF（兜底）> arXiv Summary
 
         Args:
             paper: arxiv.Result object
@@ -274,34 +284,13 @@ class ArxivRadar:
         html_url = f"https://arxiv.org/html/{arxiv_id}"
         entry_url = getattr(paper, "entry_id", f"https://arxiv.org/abs/{arxiv_id}")
 
-        # ===== 优先级 1: PDF 解析 =====
-        if PYMUPDF_AVAILABLE:
-            text_content, local_pdf_path, public_pdf_url = await self._try_fetch_from_pdf(arxiv_id)
-            if text_content and len(text_content) >= self.min_content_length:
-                text_content = self._truncate_text(text_content)
-                logger.info(f"Paper {arxiv_id}: Successfully extracted from PDF ({len(text_content)} chars)")
-                return PaperContent(
-                    arxiv_id=arxiv_id,
-                    title=paper.title,
-                    authors=[author.name for author in paper.authors],
-                    published_date=self._format_date(
-                        getattr(paper, "published", None)
-                        or getattr(paper, "published_date", None)
-                        or getattr(paper, "updated", None)
-                    ),
-                    text_content=text_content,
-                    html_url=html_url,
-                    pdf_path=public_pdf_url,  # 使用 R2 URL (如果启用) 或本地路径
-                    source="pdf"
-                )
-            else:
-                logger.warning(f"Paper {arxiv_id}: PDF extraction failed or content too short, trying HTML")
-
-        # ===== 优先级 2: HTML 解析 =====
+        # ===== 优先级 1: HTML 解析（HTML-First，减轻 PDF 双栏错位幻觉）=====
         text_content = await self._try_fetch_from_html(arxiv_id, html_url)
         if text_content and len(text_content) >= self.min_content_length:
             text_content = self._truncate_text(text_content)
-            logger.info(f"Paper {arxiv_id}: Successfully extracted from HTML ({len(text_content)} chars)")
+            logger.info(
+                f"Paper {arxiv_id}: HTML-First — extracted from HTML ({len(text_content)} chars)"
+            )
             return PaperContent(
                 arxiv_id=arxiv_id,
                 title=paper.title,
@@ -316,14 +305,41 @@ class ArxivRadar:
                 pdf_path=None,
                 source="html"
             )
-        else:
-            logger.warning(f"Paper {arxiv_id}: HTML extraction failed or content too short, using summary")
+        logger.warning(
+            f"Paper {arxiv_id}: HTML-First path failed or too short; falling back to PDF if available"
+        )
+
+        # ===== 优先级 2: PDF 解析（兜底）=====
+        if PYMUPDF_AVAILABLE:
+            text_content, local_pdf_path, public_pdf_url = await self._try_fetch_from_pdf(arxiv_id)
+            if text_content and len(text_content) >= self.min_content_length:
+                text_content = self._truncate_text(text_content)
+                logger.info(
+                    f"Paper {arxiv_id}: PDF fallback — extracted ({len(text_content)} chars)"
+                )
+                return PaperContent(
+                    arxiv_id=arxiv_id,
+                    title=paper.title,
+                    authors=[author.name for author in paper.authors],
+                    published_date=self._format_date(
+                        getattr(paper, "published", None)
+                        or getattr(paper, "published_date", None)
+                        or getattr(paper, "updated", None)
+                    ),
+                    text_content=text_content,
+                    html_url=html_url,
+                    pdf_path=public_pdf_url,
+                    source="pdf"
+                )
+            logger.warning(f"Paper {arxiv_id}: PDF fallback failed or too short; trying summary")
 
         # ===== 优先级 3: arXiv Summary 兜底 =====
         text_content = (getattr(paper, "summary", "") or "").strip()
         if text_content and len(text_content) >= self.min_content_length:
             text_content = self._truncate_text(text_content)
-            logger.info(f"Paper {arxiv_id}: Using arXiv summary ({len(text_content)} chars)")
+            logger.info(
+                f"Paper {arxiv_id}: Summary fallback (priority 3) ({len(text_content)} chars)"
+            )
             return PaperContent(
                 arxiv_id=arxiv_id,
                 title=paper.title,
@@ -546,6 +562,15 @@ class ArxivRadar:
         Returns:
             截断后的文本
         """
+        # 切除 References / Bibliography 之后的内容，避免尾部截断全是参考文献诱发 baseline 幻觉
+        ref_boundary = re.search(
+            r"\n(?:\d+\.\s*)?(?:References|Bibliography)\s*\n",
+            text,
+            re.IGNORECASE,
+        )
+        if ref_boundary:
+            text = text[: ref_boundary.start()]
+
         if len(text) <= MAX_TEXT_LENGTH:
             return text
 

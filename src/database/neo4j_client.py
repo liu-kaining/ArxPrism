@@ -168,12 +168,15 @@ class Neo4jClient:
         在事务中执行论文图谱写入.
 
         使用 MERGE (禁止 CREATE) + 参数化查询 + 名称归一化。
-        防线2: 所有 MERGE 使用 _normalize_name() 处理后的名称
-        防线4: [:IMPROVES_UPON] 边写入 published_date
+        防线2: Method/Dataset/Metric 等使用 _normalize_name()；Author 仅 strip+lower。
+        防线4: [:IMPROVES_UPON] 边写入 published_date、metrics、datasets
         """
         paper_id = data.paper_id
         extraction = data.extraction_data
         published_date = data.publication_date
+        core_problem = (
+            extraction.core_problem if extraction is not None else "NOT_MENTIONED"
+        )
 
         # =========================================================================
         # 1. MERGE Paper 节点 (按 arxiv_id 唯一合并)
@@ -199,16 +202,19 @@ class Neo4jClient:
             title=data.title,
             published_date=published_date,
             url=f"https://arxiv.org/abs/{paper_id}",
-            core_problem=extraction.core_problem,
+            core_problem=core_problem,
             summary=getattr(data, 'summary', '') or ''
         )
 
         # =========================================================================
         # 2. MERGE Author 节点和 WRITTEN_BY 关系
+        # 作者名仅 strip + lower，不用 _normalize_name，避免 "Y. Li" 与 "Ying Li" 被合并
         # =========================================================================
         for author_name in data.authors:
-            normalized_name = _normalize_name(author_name)
-            logger.debug(f"MERGing Author: {author_name} -> normalized: {normalized_name}")
+            if not isinstance(author_name, str) or not author_name.strip():
+                continue
+            normalized_name = author_name.strip().lower()
+            logger.debug(f"MERGing Author: {author_name} -> key: {normalized_name}")
             await tx.run(
                 """
                 MERGE (a:Author {name: $name})
@@ -223,11 +229,40 @@ class Neo4jClient:
                 arxiv_id=paper_id
             )
 
+        if extraction is None:
+            logger.info(
+                f"Paper {paper_id}: extraction_data is None; "
+                "skipped Method/Dataset/Metric/Innovation/Limitation edges"
+            )
+            return
+
+        normalized_task: Optional[str] = None
+        task_name = extraction.task_name
+        if task_name and task_name != "NOT_MENTIONED":
+            normalized_task = _normalize_name(task_name)
+            if normalized_task:
+                logger.debug(f"MERGing Task: {task_name} -> normalized: {normalized_task}")
+                await tx.run(
+                    """
+                    MERGE (t:Task {name: $task_name})
+                    ON CREATE SET t.original_name = $original_task_name
+                    ON MATCH SET t.original_name = $original_task_name
+                    WITH t
+                    MATCH (p:Paper {arxiv_id: $arxiv_id})
+                    MERGE (p)-[:ADDRESSES]->(t)
+                    """,
+                    task_name=normalized_task,
+                    original_task_name=task_name,
+                    arxiv_id=paper_id,
+                )
+            else:
+                logger.warning(f"Skipping empty normalized task_name: {task_name}")
+
         # =========================================================================
         # 3. MERGE Method 节点和 PROPOSES 关系
         # =========================================================================
         method_name = extraction.proposed_method.name
-        normalized_method = None  # 初始化，避免未定义
+        normalized_method: Optional[str] = None  # 初始化，避免未定义
 
         if method_name and method_name != "NOT_MENTIONED":
             normalized_method = _normalize_name(method_name)
@@ -252,12 +287,25 @@ class Neo4jClient:
                     arxiv_id=paper_id
                 )
 
+                if normalized_task:
+                    await tx.run(
+                        """
+                        MATCH (m:Method {name: $method_name})
+                        MATCH (t:Task {name: $task_name})
+                        MERGE (m)-[:APPLIED_TO]->(t)
+                        """,
+                        method_name=normalized_method,
+                        task_name=normalized_task,
+                    )
+
                 # =========================================================================
                 # 4. MERGE baselines_beaten -> Method 节点和 [:IMPROVES_UPON] 关系 (核心边)
                 #
                 # 防线2: 使用 _normalize_name() 归一化后的名称作为 MERGE 键
                 # 防线4: 写入 published_date 到边属性，防止环路
                 # =========================================================================
+                metrics = extraction.knowledge_graph_nodes.metrics_improved
+                datasets = extraction.knowledge_graph_nodes.datasets_used
                 for baseline_name in extraction.knowledge_graph_nodes.baselines_beaten:
                     normalized_baseline = _normalize_name(baseline_name)
 
@@ -282,12 +330,16 @@ class Neo4jClient:
                                 ELSE baseline.first_appeared
                             END
                         MERGE (improved)-[r:IMPROVES_UPON]->(baseline)
-                        SET r.discovered_at = $published_date
+                        SET r.discovered_at = $published_date,
+                            r.metrics = $metrics,
+                            r.datasets = $datasets
                         """,
                         method_name=normalized_method,
                         baseline_name=normalized_baseline,
                         baseline_original_name=baseline_name,
-                        published_date=published_date
+                        published_date=published_date,
+                        metrics=metrics,
+                        datasets=datasets,
                     )
 
         # =========================================================================
@@ -612,12 +664,14 @@ class Neo4jClient:
         OPTIONAL MATCH (p)-[:WRITTEN_BY]->(a:Author)
         OPTIONAL MATCH (p)-[:EVALUATED_ON]->(d:Dataset)
         OPTIONAL MATCH (p)-[:MEASURES]->(mt:Metric)
+        OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
         OPTIONAL MATCH (m)-[:IMPROVES_UPON]->(baseline:Method)
         WITH p,
              collect(DISTINCT coalesce(m.original_name, m.name)) AS methods,
              collect(DISTINCT coalesce(a.original_name, a.name)) AS authors,
              collect(DISTINCT coalesce(d.original_name, d.name)) AS datasets,
              collect(DISTINCT coalesce(mt.original_name, mt.name)) AS metrics,
+             collect(DISTINCT coalesce(t.original_name, t.name)) AS tasks,
              collect(DISTINCT coalesce(baseline.original_name, baseline.name)) AS baselines
         WHERE $q = "" OR toLower(coalesce(p.title,"")) CONTAINS $q
            OR toLower(coalesce(p.core_problem,"")) CONTAINS $q
@@ -628,6 +682,7 @@ class Neo4jClient:
           p.published_date AS published_date,
           p.core_problem AS core_problem,
           methods[0] AS proposed_method,
+          tasks[0] AS task_name,
           authors AS authors,
           datasets AS datasets,
           metrics AS metrics,
@@ -689,6 +744,7 @@ class Neo4jClient:
         OPTIONAL MATCH (p)-[:HAS_LIMITATION]->(l:Limitation)
         OPTIONAL MATCH (p)-[:EVALUATED_ON]->(d:Dataset)
         OPTIONAL MATCH (p)-[:MEASURES]->(mt:Metric)
+        OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
         OPTIONAL MATCH (m)-[:IMPROVES_UPON]->(baseline:Method)
 
         RETURN
@@ -705,7 +761,8 @@ class Neo4jClient:
           collect(DISTINCT coalesce(l.original_content, l.content)) AS limitations,
           collect(DISTINCT coalesce(baseline.original_name, baseline.name)) AS baselines,
           collect(DISTINCT coalesce(d.original_name, d.name)) AS datasets,
-          collect(DISTINCT coalesce(mt.original_name, mt.name)) AS metrics
+          collect(DISTINCT coalesce(mt.original_name, mt.name)) AS metrics,
+          collect(DISTINCT coalesce(t.original_name, t.name)) AS tasks
         """
 
         try:
@@ -733,6 +790,7 @@ class Neo4jClient:
                 "baselines": [b for b in row["baselines"] if b],
                 "datasets": [d for d in row["datasets"] if d],
                 "metrics": [m for m in row["metrics"] if m],
+                "tasks": [t for t in row["tasks"] if t],
             }
 
         except Exception as e:
