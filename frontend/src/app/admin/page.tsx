@@ -77,7 +77,9 @@ export default function AdminPage() {
         if (cancelled) return;
         if (m.profile.role !== "admin") {
           setAllowed(false);
-          toast.error("需要管理员权限");
+          toast.error(
+            `需要管理员权限。后端读到：user_id=${m.user_id}，profile.role=${m.profile.role}。请在「同一 Supabase 项目」里执行 update public.profiles set role = 'admin' where id = '${m.user_id}';（与 JWT 的 sub 必须一致）`
+          );
           return;
         }
         setAllowed(true);

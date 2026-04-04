@@ -46,17 +46,28 @@ export default function AuthCallbackClient() {
     exchangeInFlight.add(code);
 
     const supabase = createSupabaseBrowserClient();
-    void supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
-      exchangeInFlight.delete(code);
-      if (error) {
-        router.replace(
-          "/login?error=" + encodeURIComponent(error.message.slice(0, 300))
-        );
-        return;
+    void (async () => {
+      try {
+        const { data: existing } = await supabase.auth.getSession();
+        if (existing.session) {
+          router.replace(next);
+          router.refresh();
+          return;
+        }
+
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          router.replace(
+            "/login?error=" + encodeURIComponent(error.message.slice(0, 300))
+          );
+          return;
+        }
+        router.replace(next);
+        router.refresh();
+      } finally {
+        exchangeInFlight.delete(code);
       }
-      router.replace(next);
-      router.refresh();
-    });
+    })();
   }, [router]);
 
   useEffect(() => {

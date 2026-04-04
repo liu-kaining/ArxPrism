@@ -39,3 +39,4 @@ python-dotenv>=1.0.0
 # Supabase (Auth profiles / settings; JWT 校验)
 supabase>=2.6.0
 python-jose[cryptography]>=3.3.0
+PyJWT[crypto]>=2.8.0

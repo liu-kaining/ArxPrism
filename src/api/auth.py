@@ -1,16 +1,23 @@
 """
-JWT 鉴权与角色依赖：Supabase HS256 + public.profiles。
+JWT 鉴权与角色依赖：Supabase access token + public.profiles。
+- 旧版：HS256 + SUPABASE_JWT_SECRET（python-jose）
+- 新版：RS256/ES256，公钥自 {SUPABASE_URL}/auth/v1/certs（PyJWT + PyJWKClient）
 可选 AUTH_DISABLED 开发旁路；管理员可额外接受旧版 X-ArxPrism-Admin-Token（无需 Bearer）。
 """
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 from dataclasses import dataclass
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import Header, HTTPException
 from jose import JWTError, jwt
+
+import jwt as pyjwt
+from jwt import PyJWKClient
 
 from src.core.config import settings
 from src.services.supabase_backend import supabase_backend
@@ -41,13 +48,19 @@ def _dev_user() -> CurrentUser:
     )
 
 
-def _decode_supabase_jwt(token: str) -> dict:
-    secret = (settings.supabase_jwt_secret or "").strip()
-    if not secret:
-        raise HTTPException(
-            status_code=503,
-            detail="Server misconfigured: SUPABASE_JWT_SECRET is empty",
-        )
+def _jwt_header_unverified(token: str) -> dict[str, Any]:
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return {}
+        pad = "=" * (-len(parts[0]) % 4)
+        raw = base64.urlsafe_b64decode(parts[0] + pad)
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {}
+
+
+def _decode_supabase_jwt_hs256(token: str, secret: str) -> dict:
     try:
         return jwt.decode(
             token,
@@ -57,15 +70,73 @@ def _decode_supabase_jwt(token: str) -> dict:
             options={"verify_aud": True},
         )
     except JWTError:
-        try:
-            return jwt.decode(
-                token,
-                secret,
-                algorithms=["HS256"],
-                options={"verify_aud": False},
+        return jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+
+
+def _decode_supabase_jwt_jwks(token: str, alg: str) -> dict:
+    """Supabase 新版 JWT 多为 RS256/ES256，公钥在 {SUPABASE_URL}/auth/v1/certs。"""
+    base = (settings.supabase_url or "").strip().rstrip("/")
+    if not base:
+        raise HTTPException(
+            status_code=503,
+            detail="Server misconfigured: SUPABASE_URL is empty (required for JWKS / asymmetric JWT)",
+        )
+    jwks_url = f"{base}/auth/v1/certs"
+    try:
+        jwks_client = PyJWKClient(jwks_url)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not load Supabase JWKS from {jwks_url}: {e}",
+        ) from e
+    try:
+        return pyjwt.decode(
+            token,
+            signing_key.key,
+            algorithms=[alg],
+            audience="authenticated",
+            options={"verify_aud": True},
+        )
+    except pyjwt.InvalidAudienceError:
+        return pyjwt.decode(
+            token,
+            signing_key.key,
+            algorithms=[alg],
+            options={"verify_aud": False},
+        )
+    except pyjwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}") from e
+
+
+def _decode_supabase_jwt(token: str) -> dict:
+    header = _jwt_header_unverified(token)
+    alg = (header.get("alg") or "HS256").upper()
+
+    if alg == "HS256":
+        secret = (settings.supabase_jwt_secret or "").strip()
+        if not secret:
+            raise HTTPException(
+                status_code=503,
+                detail="Server misconfigured: SUPABASE_JWT_SECRET is empty",
             )
+        try:
+            return _decode_supabase_jwt_hs256(token, secret)
         except JWTError as e:
             raise HTTPException(status_code=401, detail=f"Invalid token: {e}") from e
+
+    if alg in ("RS256", "ES256"):
+        return _decode_supabase_jwt_jwks(token, alg)
+
+    raise HTTPException(
+        status_code=401,
+        detail=f"Invalid token: The specified alg value is not allowed ({alg})",
+    )
 
 
 async def _profile_to_user(user_id: str, email: Optional[str]) -> CurrentUser:
@@ -75,10 +146,16 @@ async def _profile_to_user(user_id: str, email: Optional[str]) -> CurrentUser:
             status_code=403,
             detail="User profile missing; ensure Supabase trigger handle_new_user is installed",
         )
+    raw_role = row.get("role")
+    if raw_role is None:
+        norm_role = "user"
+    else:
+        norm_role = str(raw_role).strip().lower() or "user"
+
     return CurrentUser(
         id=user_id,
         email=email,
-        role=str(row.get("role") or "user"),
+        role=norm_role,
         quota_limit=int(row.get("quota_limit") or 0),
         quota_used=int(row.get("quota_used") or 0),
         is_banned=bool(row.get("is_banned")),
@@ -97,8 +174,9 @@ async def _user_from_bearer_authorization(authorization: Optional[str]) -> Curre
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     payload = _decode_supabase_jwt(token)
-    sub = payload.get("sub") or payload.get("user_id")
-    if not sub or not isinstance(sub, str):
+    raw_sub = payload.get("sub") if payload.get("sub") is not None else payload.get("user_id")
+    sub = str(raw_sub).strip() if raw_sub is not None else ""
+    if not sub:
         raise HTTPException(status_code=401, detail="Token missing subject")
     email = payload.get("email")
     if email is not None and not isinstance(email, str):

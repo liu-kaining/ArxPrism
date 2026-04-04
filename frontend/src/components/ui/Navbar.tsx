@@ -47,7 +47,8 @@ export default function Navbar() {
     void meApi
       .getMe()
       .then((m) => {
-        if (!cancelled) setIsAdmin(m.profile.role === "admin");
+        if (!cancelled)
+          setIsAdmin(m.profile.role?.toLowerCase?.() === "admin");
       })
       .catch(() => {
         if (!cancelled) setIsAdmin(false);

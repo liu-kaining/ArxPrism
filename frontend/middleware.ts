@@ -6,6 +6,13 @@ import { isPublicRoute } from "@/lib/authRoutes";
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
+  // OAuth 回到 /auth/callback 时不能在这里跑 getUser()/会话刷新：setAll 会改写 Cookie，
+  // 常在客户端 exchangeCodeForSession 之前清掉 PKCE code_verifier →
+  // "PKCE code verifier not found in storage".
+  if (pathname.startsWith("/auth")) {
+    return NextResponse.next();
+  }
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
   if (!url || !anon) {
