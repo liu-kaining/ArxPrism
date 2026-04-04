@@ -126,12 +126,24 @@ async def process_single_paper(
 
     ed = extraction.extraction_data
     sum_txt = (paper.summary or "").strip()
+    summary_zh = ""
+    if sum_txt:
+        print_step("翻译", "正在将摘要译为专业中文...", "🌐")
+        tr = await llm_extractor.translate_arxiv_abstract_to_zh(
+            abstract_en=sum_txt,
+            paper_title=extraction.title or "",
+        )
+        summary_zh = (tr or "").strip()
+        if summary_zh:
+            print_success("摘要中译完成")
+        else:
+            print_warning("摘要中译失败或为空，将仅保存原文摘要")
     embed_parts = [extraction.title or "", ed.core_problem or ""]
     if sum_txt:
         embed_parts.append(sum_txt)
     embed_text = "\n\n".join(p for p in embed_parts if p)
     vec = await llm_extractor.generate_embedding(embed_text)
-    upd = {"summary": sum_txt}
+    upd = {"summary": sum_txt, "summary_zh": summary_zh}
     if vec and len(vec) == 1536:
         upd["embedding"] = vec
     extraction = extraction.model_copy(update=upd)

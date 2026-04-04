@@ -4,6 +4,7 @@ import "./globals.css";
 import "@xyflow/react/dist/style.css";
 import { Toaster } from "react-hot-toast";
 import Navbar from "@/components/ui/Navbar";
+import { SupabaseProvider } from "@/components/providers/SupabaseProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -22,12 +23,14 @@ export default function RootLayout({
       <body
         className={`${inter.className} min-h-screen bg-background text-foreground antialiased`}
       >
-        <div className="flex min-h-screen flex-col">
-          <Navbar />
-          <main className="container mx-auto flex-1 px-4 py-6">
-            {children}
-          </main>
-        </div>
+        <SupabaseProvider>
+          <div className="flex min-h-screen flex-col">
+            <Navbar />
+            <main className="container mx-auto flex-1 px-4 py-6">
+              {children}
+            </main>
+          </div>
+        </SupabaseProvider>
         <Toaster
           position="top-right"
           toastOptions={{

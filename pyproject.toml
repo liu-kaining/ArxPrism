@@ -10,6 +10,7 @@ packages = [{include = "src", from = "."}]
 python = "^3.11"
 fastapi = "^0.115.0"
 uvicorn = {extras = ["standard"], version = "^0.30.0"}
+python-multipart = "^0.0.9"
 pydantic = "^2.9.0"
 pydantic-settings = "^2.6.0"
 neo4j = "^5.25.0"
@@ -21,6 +22,8 @@ beautifulsoup4 = "^4.12.0"
 markdownify = "^0.14.1"
 python-dotenv = "^1.0.0"
 httpx = "^0.27.0"
+supabase = "^2.6.0"
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 streamlit = "^1.40.0"
 streamlit-agraph = "^0.0.45"
 

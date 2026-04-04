@@ -1,18 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  useSession,
+  useSupabaseClient,
+} from "@/components/providers/SupabaseProvider";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { meApi } from "@/lib/api/client";
+import { Button } from "@/components/ui/Button";
 import {
   BookOpen,
   GitBranch,
   LayoutGrid,
+  LogIn,
+  LogOut,
   Network,
   Rocket,
+  ShieldAlert,
   Sparkles,
+  User,
 } from "lucide-react";
 
-const navItems = [
+const baseNavItems = [
   { href: "/", label: "首页", icon: LayoutGrid },
   { href: "/papers", label: "论文列表", icon: BookOpen },
   { href: "/tasks", label: "任务管理", icon: Rocket },
@@ -22,26 +33,64 @@ const navItems = [
 
 export default function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const session = useSession();
+  const supabase = useSupabaseClient();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!session) {
+      setIsAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    void meApi
+      .getMe()
+      .then((m) => {
+        if (!cancelled) setIsAdmin(m.profile.role === "admin");
+      })
+      .catch(() => {
+        if (!cancelled) setIsAdmin(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  const navItems = useMemo(() => {
+    if (!isAdmin) return baseNavItems;
+    return [
+      ...baseNavItems,
+      {
+        href: "/admin",
+        label: "管理",
+        icon: ShieldAlert,
+      },
+    ];
+  }, [isAdmin]);
+
+  const onSignOut = async () => {
+    await supabase.auth.signOut();
+    router.refresh();
+  };
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-amber-200/70 bg-white/85 shadow-[0_1px_0_rgba(251,191,36,0.12)] backdrop-blur-md">
       <div className="container mx-auto px-4">
-        <div className="flex h-16 items-center justify-between">
-          {/* Logo */}
-          <Link href="/" className="group flex items-center gap-3">
+        <div className="flex h-16 items-center justify-between gap-2">
+          <Link href="/" className="group flex min-w-0 shrink items-center gap-3">
             <div className="relative">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-600 to-orange-700 shadow-sm transition-transform group-hover:scale-105">
                 <Sparkles className="h-5 w-5 text-amber-50" />
               </div>
               <div className="absolute -inset-1 rounded-xl bg-amber-400/25 opacity-0 blur-md transition-opacity group-hover:opacity-100" />
             </div>
-            <span className="text-xl font-bold tracking-tight text-stone-900">
+            <span className="truncate text-xl font-bold tracking-tight text-stone-900">
               ArxPrism
             </span>
           </Link>
 
-          {/* Navigation */}
-          <nav className="-mr-2 flex max-w-[calc(100vw-7rem)] flex-nowrap items-center justify-end gap-0.5 overflow-x-auto pb-0.5 sm:mr-0 sm:max-w-none sm:gap-1 sm:overflow-visible sm:pb-0">
+          <nav className="-mr-2 flex max-w-[calc(100vw-10rem)] flex-nowrap items-center justify-end gap-0.5 overflow-x-auto pb-0.5 sm:mr-0 sm:max-w-none sm:gap-1 sm:overflow-visible sm:pb-0">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive =
@@ -71,6 +120,41 @@ export default function Navbar() {
               );
             })}
           </nav>
+
+          <div className="flex shrink-0 items-center gap-2">
+            {session ? (
+              <>
+                <span
+                  className="hidden max-w-[8rem] truncate text-xs text-stone-500 md:inline"
+                  title={session.user.email ?? undefined}
+                >
+                  <User className="mr-1 inline h-3.5 w-3.5" />
+                  {session.user.email ?? session.user.id.slice(0, 8)}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 rounded-xl border-stone-300 text-xs"
+                  onClick={() => void onSignOut()}
+                >
+                  <LogOut className="mr-1 h-3.5 w-3.5" />
+                  退出
+                </Button>
+              </>
+            ) : (
+              <Link href="/login">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-9 rounded-xl bg-amber-700 text-xs text-white hover:bg-amber-800"
+                >
+                  <LogIn className="mr-1 h-3.5 w-3.5" />
+                  登录
+                </Button>
+              </Link>
+            )}
+          </div>
         </div>
       </div>
     </header>

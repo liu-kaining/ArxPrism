@@ -139,17 +139,25 @@ export function CommandCenterNode({ data }: NodeProps) {
 export type EvolutionNodeData = {
   label: string;
   generation: number;
+  core_architecture?: string;
 };
+
+function showCoreArchitecture(raw: string | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s || s.toUpperCase() === "NOT_MENTIONED") return null;
+  return s;
+}
 
 export function EvolutionGraphNode({ data }: NodeProps) {
   const d = data as EvolutionNodeData;
   const isRoot = d.generation === 0;
+  const arch = showCoreArchitecture(d.core_architecture);
   return (
     <>
       <Handle
         type="target"
-        position={Position.Left}
-        className="!h-2 !w-2 !border-0 !bg-cyan-500/80"
+        position={Position.Bottom}
+        className="!h-2 !w-2 !border-0 !bg-violet-500/80"
       />
       <div
         className={`max-w-[220px] rounded-xl border px-3 py-2 shadow-md ring-1 ${
@@ -168,11 +176,16 @@ export function EvolutionGraphNode({ data }: NodeProps) {
         >
           {d.label}
         </div>
+        {arch ? (
+          <div className="mt-1 font-mono text-[10px] font-medium tracking-tight text-violet-600/95">
+            [Arch: {arch}]
+          </div>
+        ) : null}
       </div>
       <Handle
         type="source"
-        position={Position.Right}
-        className="!h-2 !w-2 !border-0 !bg-cyan-500/80"
+        position={Position.Top}
+        className="!h-2 !w-2 !border-0 !bg-violet-500/80"
       />
     </>
   );

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useTaskStore } from "@/lib/stores/taskStore";
 import { arxivApi, type ArxivPreviewSearchResult } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
@@ -67,7 +68,14 @@ const topicColors: Record<string, string> = {
   market_prediction: "from-cyan-500 to-blue-500",
 };
 
+/** 预设 query 的首段，与后端 build_optimized_query 的「用户词」一致 */
+function firstTermFromPresetQuery(presetQuery: string | undefined): string {
+  if (!presetQuery?.trim()) return "";
+  return presetQuery.split(" OR ")[0]?.trim() ?? "";
+}
+
 export default function TaskCreateForm() {
+  const router = useRouter();
   const { presets, fetchPresets, createTask, isLoading } = useTaskStore();
   const [query, setQuery] = useState("");
   const [domainPreset, setDomainPreset] = useState("sre");
@@ -79,23 +87,49 @@ export default function TaskCreateForm() {
     fetchPresets();
   }, [fetchPresets]);
 
+  /**
+   * 默认选中 SRE 时不会触发主题卡 onClick，搜索框曾长期为空 → 预览/创建误报「请先输入」。
+   * 仅在预设加载或切换主题时，若输入仍为空则填入该主题默认检索词（不依赖 query，避免清空后被立刻写回）。
+   */
+  useEffect(() => {
+    if (domainPreset === "custom") return;
+    if (presets.length === 0) return;
+    const preset = presets.find((p) => p.key === domainPreset);
+    const hint = firstTermFromPresetQuery(preset?.query);
+    if (!hint) return;
+    setQuery((prev) => (prev.trim() === "" ? hint : prev));
+  }, [presets, domainPreset]);
+
+  const getEffectiveQuery = useCallback((): string => {
+    const typed = query.trim();
+    if (typed) return typed;
+    if (domainPreset === "custom") return "";
+    const preset = presets.find((p) => p.key === domainPreset);
+    return firstTermFromPresetQuery(preset?.query);
+  }, [query, domainPreset, presets]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!query.trim()) {
-      toast.error("请输入搜索查询");
+    const q = getEffectiveQuery();
+    if (!q) {
+      toast.error(
+        domainPreset === "custom"
+          ? "自定义模式下请在搜索框输入 arXiv 检索式"
+          : "请输入搜索查询，或等待主题预设加载完成"
+      );
       return;
     }
 
     try {
       const taskId = await createTask({
-        query: query.trim(),
+        query: q,
         domain_preset: domainPreset,
         max_results: maxResults,
       });
       if (taskId) {
-        toast.success(`任务已创建: ${taskId.slice(0, 8)}...`);
-        setQuery("");
+        toast.success("任务已创建，正在打开进度页…");
+        router.push(`/tasks/${taskId}`);
       } else {
         toast.error("创建任务失败: 返回的任务ID为空");
       }
@@ -118,8 +152,13 @@ export default function TaskCreateForm() {
   };
 
   const handlePreviewSearch = async () => {
-    if (!query.trim()) {
-      toast.error("请先输入搜索查询");
+    const q = getEffectiveQuery();
+    if (!q) {
+      toast.error(
+        domainPreset === "custom"
+          ? "自定义模式下请先输入检索式再预览"
+          : "请先输入搜索查询，或等待主题预设加载完成"
+      );
       return;
     }
     setPreviewLoading(true);
@@ -127,7 +166,7 @@ export default function TaskCreateForm() {
     try {
       const limit = Math.min(Math.max(maxResults, 5), 25);
       const data = await arxivApi.previewSearch({
-        query: query.trim(),
+        query: q,
         domain_preset: domainPreset,
         limit,
       });

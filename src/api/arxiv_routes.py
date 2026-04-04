@@ -5,7 +5,9 @@ arXiv 检索预览 API（不入库、不抓取全文）.
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from src.api.auth import require_user
 from pydantic import BaseModel, Field
 
 from src.models.schemas import APIResponse
@@ -13,7 +15,11 @@ from src.services.arxiv_radar import arxiv_radar
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/arxiv", tags=["arxiv"])
+router = APIRouter(
+    prefix="/api/v1/arxiv",
+    tags=["arxiv"],
+    dependencies=[Depends(require_user)],
+)
 
 
 class ArxivPreviewSearchRequest(BaseModel):

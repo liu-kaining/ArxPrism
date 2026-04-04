@@ -86,6 +86,19 @@ class TaskManager:
             raise RuntimeError("Redis not connected. Call connect() first.")
         return self._redis
 
+    async def celery_broker_queue_depth(self) -> Optional[int]:
+        """
+        粗略读取默认 Celery 队列长度（Redis broker 下 list key `celery`）。
+        非 Redis broker 或键不存在时返回 None。
+        """
+        try:
+            redis = self._get_redis()
+            n = await redis.llen("celery")
+            return int(n)
+        except Exception as e:
+            logger.debug("celery_broker_queue_depth: %s", e)
+            return None
+
     # =========================================================================
     # 任务 CRUD 操作
     # =========================================================================

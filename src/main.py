@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.admin_routes import router as admin_router
 from src.api.arxiv_routes import router as arxiv_router
+from src.api.me_routes import router as me_router
 from src.api.routes import router as api_router
 from src.api.task_routes import router as task_router
 from src.core.config import settings
@@ -109,6 +110,7 @@ app.add_middleware(
 app.include_router(api_router)
 app.include_router(task_router)
 app.include_router(arxiv_router)
+app.include_router(me_router)
 app.include_router(admin_router)
 
 

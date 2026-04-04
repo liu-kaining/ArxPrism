@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from src.core.config import settings
 from src.models.schemas import (
+    AbstractTranslationResponse,
     EntityResolutionResponse,
     PaperExtractionResponse,
     TriageResponse,
@@ -35,10 +36,10 @@ SYSTEM_PROMPT = """你现在是一位拥有 20 年经验的顶尖云原生架构
 你的任务是阅读一篇最新的学术论文（通常为清洗后的 HTML 或 LaTeX 文本），并极其精确地从中萃取出结构化的核心知识。
 
 【最高指令与防御机制】
-1. 零幻觉容忍 (Zero Hallucination)：你提取的所有信息必须 100% 来源于提供的论文文本。严禁使用你的先验知识进行编造、脑补、推测或过度引申。若论文未给出某对比实验的基线、数据集或指标，请将 `knowledge_graph_nodes.comparisons` 中对应条目留空字段或整条省略；字符串字段无依据时输出 "NOT_MENTIONED" 或保持空字符串。
+1. 零幻觉容忍 (Zero Hallucination)：你提取的所有信息必须 100% 来源于提供的论文文本。严禁使用你的先验知识进行编造、脑补、推测或过度引申。若论文未明确写出技术传承或某对比实验的基线、数据集或指标，请将 `knowledge_graph_nodes.evolution_lineages` / `comparisons` 中对应条目留空或整条省略；字符串字段无依据时输出 "NOT_MENTIONED" 或保持空字符串。
 2. 领域安全锁 (Domain Gatekeeper)：在开始提取之前，请务必判断该论文是否真实属于"计算机系统、分布式计算、软件工程、AIOps、微服务、站点可靠性工程(SRE)"领域。如果它属于计算机视觉(如纯图像分类)、纯医学、纯物理学等毫不相干的领域（即使包含同名缩写如 SRE-CLIP），请将 `is_relevant_to_domain` 设置为 false，并停止后续所有深度提取（其他字段可留空或填默认值）。
-3. 专家级精炼 (Expert Conciseness)：你的受众是资深技术专家（如量化研究员、架构师）。请使用极度精炼，专业、一针见血的学术/工程语言（中文）进行总结。拒绝废话、套话和诸如"本研究是一项很有意义的探索"之类的空泛表达。
-4. 实体归一化 (Entity Normalization)：在 `comparisons` 中填写 `baseline_method` 与 `dataset` 时，尽量使用论文中的专有名词或标准缩写（如 "DeepLog"、"HDFS"），避免整句描述，便于图谱实体对齐。`metrics_improvement` 用简短可读的幅度表述（如 "F1 +5.2%"）。
+3. 专家级精炼 (Expert Conciseness)：你的受众是资深技术专家（如量化研究员、架构师）。请使用极度精炼、专业、一针见血的学术/工程语言（中文）进行总结。拒绝废话、套话和诸如"本研究是一项很有意义的探索"之类的空泛表达。
+4. 实体归一化 (Entity Normalization)：在 `evolution_lineages.ancestor_method` 与 `comparisons` 的 `baseline_method`、`dataset` 中，尽量使用论文中的专有名词或标准缩写（如 "Transformer"、"DeepLog"、"HDFS"），避免整句描述，便于图谱实体对齐。`metrics_improvement` 用简短可读的幅度表述（如 "F1 +5.2%"）。
 
 【输出格式要求】
 你必须且只能输出一个合法的 JSON 对象。不要包含任何 Markdown 格式符号（如 ```json），不要包含任何额外的解释性、过渡性文本。你的输出将被程序直接用 `json.loads()` 解析。JSON 结构必须严格遵守预定义的 Schema。
@@ -58,40 +59,38 @@ USER_PROMPT_TEMPLATE = """请基于 System Prompt 中的指令和严格的 JSON 
   "authors": ["Author 1", "Author 2"],
   "publication_date": "YYYY-MM-DD",
 
-  "extraction_data": {{
-    "reasoning_process": "先思考…再提取…：通读实验与对比章节，列出在哪些数据集上、相对哪些基线、报告了哪些指标变化；再据此填写 comparisons。",
+  "extraction_data": {
+    "reasoning_process": "先思考…再提取…：通读 Related Work / Method，识别方法建立在哪些既有工作之上并填写 evolution_lineages；再通读实验与对比章节填写 comparisons。",
 
     "core_problem": "用 1-2 句话，极其精准地概括这篇论文要解决的【底层痛点】。必须切中要害，说明为什么现有的方法不够好。",
 
     "task_name": "提炼该论文要解决的核心任务专有名词（英文短语），如 Root Cause Analysis、Log Anomaly Detection；若无法概括则 NOT_MENTIONED",
 
-    "proposed_method": {{
-      "name": "论文提出的核心模型、架构或算法的名称（通常有缩写，如 STRATUS, AMER-RCL, FaithLog）。如果未命名，提炼一个能概括其核心特征的极简短语。",
-      "description": "用 50-100 字，简要概括该方法的核心机制或工作流。它到底是怎么运作的？"
-    }},
+    "proposed_method": {
+      "name": "ArxPrism",
+      "description": "An AI-powered academic knowledge graph extractor.",
+      "core_architecture": "Vector RAG + LLM Agent",
+      "key_innovations": ["Introduced CoT for complex relation extraction", "Markdown-first parsing"],
+      "limitations": ["High LLM API cost", "Requires Neo4j 5.x"]
+    },
 
-    "knowledge_graph_nodes": {{
+    "knowledge_graph_nodes": {
+      "evolution_lineages": [
+        {
+          "ancestor_method": "Transformer",
+          "evolution_reason": "Built upon its self-attention mechanism but replaced softmax with linear attention for linear complexity."
+        }
+      ],
       "comparisons": [
-        {{
+        {
           "baseline_method": "DeepLog",
           "dataset": "HDFS",
           "metrics_improvement": "Accuracy +5.2%"
-        }}
+        }
       ]
-    }},
-
-    "critical_analysis": {{
-      "key_innovations": [
-        "核心创新点 1（理论或机制层面）",
-        "核心创新点 2（架构或工程落地层面）"
-      ],
-      "limitations": [
-        "局限性 1（重点提取作者在 Conclusion 或 Discussion 中明确承认的缺陷或未来工作）",
-        "局限性 2（如果没有明确写出，结合你作为 SRE 专家的视角，指出该方法在极端高并发或真实生产环境中可能面临的工程落地阻碍，但必须注明这是专家推断）"
-      ]
-    }}
-  }}
-}}
+    }
+  }
+}
 """
 
 ENTITY_RESOLUTION_SYSTEM = """你是一个图谱实体对齐专家。
@@ -99,13 +98,25 @@ ENTITY_RESOLUTION_SYSTEM = """你是一个图谱实体对齐专家。
 判断其中哪些名称指代**完全相同**的同一技术实体。
 只有在含义与所指对象实质相同时才归为一组；不要强行合并仅相关或相似但不同的技术。"""
 
+ABSTRACT_TRANSLATION_SYSTEM = """你是计算机科学与系统领域的资深学术译者，专精 arXiv 论文摘要的中英互译。
+
+【硬性要求】
+1. 忠实：译文必须完整覆盖原文的论点、方法、结果与限定条件；禁止遗漏、禁止编造原文没有的信息。
+2. 术语：分布式系统、机器学习、SRE、云原生、AIOps、算法/模型/数据集名称等须准确；业界无共识译名时可保留英文并在括号内给出简短说明。
+3. 形式：保留 LaTeX 与数学表达式（如 $...$、\\\\(...\\\\)）及代码标识符原样；人名、机构名按中文出版物惯例处理。
+4. 文体：使用规范的中文学术书面语，客观克制，拒绝营销腔、口语与空泛套话。
+5. 若输入摘要本身已是通顺的中文学术文本：在 translation 中输出润色后的等价中文，仍不得增添新事实。
+
+【输出】
+仅输出一个 JSON 对象，键名必须为 translation，值为完整译文字符串（允许使用 \\\\n 分段）。"""
+
 ENTITY_RESOLUTION_USER_TEMPLATE = """以下名称列表中的每一项都是图谱中已存在的 Method.name，请**原样**使用其中的字符串作为 primary_name 与 aliases，不要改写大小写或拼写。
 
 名称列表（JSON 数组）：
 {names_json}
 
 请输出唯一一个 JSON 对象，格式严格如下（不要 Markdown）：
-{{"clusters": [{{"primary_name": "<必须来自上述列表>", "aliases": ["<同义别名，均须来自上述列表>", "..."]}}]}}
+{"clusters": [{"primary_name": "<必须来自上述列表>", "aliases": ["<同义别名，均须来自上述列表>", "..."]}]}
 
 规则：
 - 只有 aliases 非空时才有融合意义；无同义词的名称不要生成 cluster。
@@ -122,28 +133,47 @@ class LLMExtractor:
         if settings.llm_base_url:
             client_kwargs["base_url"] = settings.llm_base_url
         self.client = AsyncOpenAI(**client_kwargs)
+        # 可选：专用 Embeddings 客户端（避免聚合网关在 embeddings 路径上误启 CSRF）
+        emb_url = (settings.llm_embedding_base_url or "").strip()
+        emb_key = (settings.llm_embedding_api_key or "").strip() or settings.llm_api_key
+        self._embedding_client: Optional[AsyncOpenAI] = None
+        if emb_url:
+            self._embedding_client = AsyncOpenAI(
+                api_key=emb_key,
+                base_url=emb_url,
+            )
+        self.embedding_model = (settings.llm_embedding_model or "text-embedding-3-small").strip()
         self.max_retries = settings.llm_max_retries  # 最大重试次数 = 3
         self.base_delay = settings.llm_base_delay  # 基础延迟 = 2.0 秒
-        self.model = settings.llm_model
         self.max_tokens = settings.llm_max_tokens
         self.temperature = settings.llm_temperature
 
-    async def triage_paper(self, title: str, abstract: str) -> bool:
+    async def triage_paper(
+        self,
+        title: str,
+        abstract: str,
+        *,
+        relevance_threshold: float = 0.5,
+    ) -> bool:
         """
         分诊台：仅根据标题与摘要判断是否值得下载全文并做深度萃取。
 
         失败时 fail-open 返回 True，避免因 LLM 抖动误杀全部流量。
+
+        relevance_threshold：当模型返回 relevance_score 时，要求 score >= threshold 且 is_relevant。
         """
         triage_system = (
             "你是一个严格的学术审稿助手。只根据给出的论文标题与摘要判断："
             "该工作是否属于计算机系统、SRE、云原生、微服务、分布式系统、后端架构、"
             "AIOps、可观测性、日志/链路分析、AI 基础设施（训练/推理系统工程）等相关工程领域。"
             "若是纯 CV/纯 NLP 应用且与系统可靠性无关、纯医学/物理/社科等，则判为不相关。"
-            "你必须只输出一个 JSON 对象，字段 is_relevant (boolean) 与 reason (string)。"
+            "你必须只输出一个 JSON 对象，字段："
+            "is_relevant (boolean)、reason (string)、"
+            "relevance_score (number 0~1，表示与上述工程领域的相关度，1 为高度相关)。"
         )
         user_payload = (
             f"标题:\n{title}\n\n摘要:\n{(abstract or '').strip()}\n\n"
-            "请输出 JSON: {\"is_relevant\": true/false, \"reason\": \"...\"}"
+            '请输出 JSON: {"is_relevant": true/false, "reason": "...", "relevance_score": 0.0-1.0}'
         )
         last_err = ""
         triage_max_tokens = 256
@@ -152,7 +182,7 @@ class LLMExtractor:
         for attempt in range(1, triage_retries + 1):
             try:
                 resp = await self.client.chat.completions.create(
-                    model=self.model,
+                    model=settings.llm_triage_model,
                     messages=[
                         {"role": "system", "content": triage_system},
                         {"role": "user", "content": user_payload},
@@ -166,9 +196,14 @@ class LLMExtractor:
                     raise ValueError("empty triage response")
                 parsed = TriageResponse.model_validate_json(raw)
                 logger.info(
-                    f"Triage: is_relevant={parsed.is_relevant} reason={parsed.reason[:120]!r}"
+                    f"Triage: is_relevant={parsed.is_relevant} "
+                    f"score={parsed.relevance_score} reason={parsed.reason[:120]!r}"
                 )
-                return parsed.is_relevant
+                if parsed.relevance_score is None:
+                    return bool(parsed.is_relevant)
+                return bool(
+                    parsed.is_relevant and parsed.relevance_score >= relevance_threshold
+                )
             except (json.JSONDecodeError, ValidationError, ValueError) as e:
                 last_err = str(e)
                 logger.warning(f"Triage attempt {attempt}/{triage_retries} parse/validate failed: {e}")
@@ -186,6 +221,77 @@ class LLMExtractor:
             f"Triage failed after {triage_retries} attempts ({last_err}); fail-open -> proceed"
         )
         return True
+
+    async def translate_arxiv_abstract_to_zh(
+        self,
+        abstract_en: str,
+        paper_title: str,
+    ) -> Optional[str]:
+        """
+        将 arXiv 英文摘要译为专业简体中文；用于详情页与原文对照展示。
+
+        解析或 API 全部失败时返回 None（流水线写入空 summary_zh，不阻断入库）。
+        """
+        body = (abstract_en or "").strip()
+        if not body:
+            return None
+        title_line = (paper_title or "").strip()
+        user_payload = (
+            f"论文标题（供术语与主题对齐，勿把标题内容误并入摘要译文）：\n{title_line}\n\n"
+            f"待译摘要（仅翻译以下段落）：\n{body}"
+        )
+        translate_max_tokens = min(4096, self.max_tokens)
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                resp = await self.client.chat.completions.create(
+                    model=settings.llm_extractor_model,
+                    messages=[
+                        {"role": "system", "content": ABSTRACT_TRANSLATION_SYSTEM},
+                        {"role": "user", "content": user_payload},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.12,
+                    max_tokens=translate_max_tokens,
+                )
+                raw = resp.choices[0].message.content
+                if not raw:
+                    raise ValueError("empty translation response")
+                parsed = AbstractTranslationResponse.model_validate_json(raw)
+                out = (parsed.translation or "").strip()
+                if not out:
+                    raise ValueError("empty translation field")
+                return out
+            except (json.JSONDecodeError, ValidationError, ValueError) as e:
+                last_error = e
+                logger.warning(
+                    "Abstract translation attempt %s/%s parse failed: %s",
+                    attempt,
+                    self.max_retries,
+                    e,
+                )
+            except (RateLimitError, APITimeoutError) as e:
+                last_error = e
+                logger.warning(
+                    "Abstract translation attempt %s/%s API error: %s",
+                    attempt,
+                    self.max_retries,
+                    e,
+                )
+            except Exception as e:
+                last_error = e
+                logger.error(
+                    "Abstract translation attempt %s/%s unexpected: %s",
+                    attempt,
+                    self.max_retries,
+                    e,
+                )
+            if attempt < self.max_retries:
+                await asyncio.sleep(self.base_delay * attempt)
+
+        logger.error("Abstract translation failed after retries: %s", last_error)
+        return None
 
     async def extract(
         self,
@@ -222,14 +328,14 @@ class LLMExtractor:
                 logger.debug(f"LLM extraction attempt {attempt}/{self.max_retries}")
 
                 response = await self.client.chat.completions.create(
-                    model=self.model,
+                    model=settings.llm_extractor_model,
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt}
+                        {"role": "user", "content": user_prompt},
                     ],
                     response_format={"type": "json_object"},
                     temperature=self.temperature,
-                    max_tokens=self.max_tokens
+                    max_tokens=settings.llm_max_tokens,
                 )
 
                 response_content = response.choices[0].message.content
@@ -356,7 +462,7 @@ class LLMExtractor:
         for attempt in range(1, self.max_retries + 1):
             try:
                 response = await self.client.chat.completions.create(
-                    model=self.model,
+                    model=settings.llm_resolution_model,
                     messages=[
                         {"role": "system", "content": ENTITY_RESOLUTION_SYSTEM},
                         {"role": "user", "content": user_prompt},
@@ -403,11 +509,12 @@ class LLMExtractor:
         cleaned = text.replace("\n", " ")
         if len(cleaned) > 24000:
             cleaned = cleaned[:24000]
+        emb = self._embedding_client or self.client
         last_error: Optional[Exception] = None
         for attempt in range(3):
             try:
-                response = await self.client.embeddings.create(
-                    model="text-embedding-3-small",
+                response = await emb.embeddings.create(
+                    model=self.embedding_model,
                     input=cleaned,
                     dimensions=1536,
                 )
@@ -415,14 +522,27 @@ class LLMExtractor:
                 return list(vec) if vec is not None else []
             except Exception as e:
                 last_error = e
-                logger.warning(
-                    "Embedding attempt %s/3 failed: %s",
-                    attempt + 1,
-                    e,
-                )
+                err_low = str(e).lower()
+                if "csrf" in err_low:
+                    logger.warning(
+                        "Embedding attempt %s/3 failed (gateway CSRF?): %s. "
+                        "若 chat 正常，可在环境变量设置 LLM_EMBEDDING_BASE_URL 为直连 "
+                        "OpenAI 兼容的 embeddings 端点，例如 https://api.openai.com/v1",
+                        attempt + 1,
+                        e,
+                    )
+                else:
+                    logger.warning(
+                        "Embedding attempt %s/3 failed: %s",
+                        attempt + 1,
+                        e,
+                    )
                 if attempt < 2:
                     await asyncio.sleep(self.base_delay * (attempt + 1))
-        logger.error("Embedding failed after retries: %s", last_error)
+        logger.error(
+            "Embedding failed after retries: %s (embeddings 将跳过，论文仍可入库但无向量检索)",
+            last_error,
+        )
         return []
 
 

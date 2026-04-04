@@ -57,8 +57,17 @@ async def _check_env() -> CheckResult:
             detail="missing or placeholder; set LLM_API_KEY in .env",
         )
 
-    if not settings.llm_model or not settings.llm_model.strip():
-        return CheckResult(name="LLM_MODEL", ok=False, detail="missing; set LLM_MODEL in .env")
+    for name, val in (
+        ("LLM_TRIAGE_MODEL", settings.llm_triage_model),
+        ("LLM_EXTRACTOR_MODEL", settings.llm_extractor_model),
+        ("LLM_RESOLUTION_MODEL", settings.llm_resolution_model),
+    ):
+        if not val or not str(val).strip():
+            return CheckResult(
+                name=name,
+                ok=False,
+                detail=f"missing; set {name} in .env",
+            )
 
     if settings.llm_base_url is not None and settings.llm_base_url.strip() == "":
         return CheckResult(name="LLM_BASE_URL", ok=False, detail="empty string; unset it or provide a URL")
@@ -66,7 +75,10 @@ async def _check_env() -> CheckResult:
     return CheckResult(
         name="LLM envs",
         ok=True,
-        detail=f"model={settings.llm_model}, base_url={settings.llm_base_url or '(default)'}",
+        detail=(
+            f"triage={settings.llm_triage_model}, extract={settings.llm_extractor_model}, "
+            f"resolution={settings.llm_resolution_model}, base_url={settings.llm_base_url or '(default)'}"
+        ),
     )
 
 

@@ -5,7 +5,7 @@ Neo4j Database Client
 所有写入操作必须使用 MERGE 语句保证幂等性，必须使用参数化查询防注入。
 
 防线2: 实体归一化算法 - 解决 Deep-Log / DeepLog / deeplog 节点对齐问题
-防线4: DAG 环路防范 - [:IMPROVES_UPON] 边写入 published_date
+防线4: 实验对比边 [:IMPROVES_UPON] 写入 discovered_at；技术血脉 [:EVOLVED_FROM] 写入 reason / discovered_at
 
 Reference: ARCHITECTURE.md Section 3, TECH_DESIGN.md Section 1,
 CODE_REVIEW.md Section 1
@@ -13,7 +13,9 @@ CODE_REVIEW.md Section 1
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from neo4j.exceptions import ServiceUnavailable, CypherSyntaxError
@@ -23,11 +25,114 @@ from src.models.schemas import PaperExtractionResponse
 
 logger = logging.getLogger(__name__)
 
+
+def _method_core_architecture(node: Any) -> str:
+    """从 Neo4j Method 节点读取 core_architecture（字符串）。"""
+    if node is None:
+        return ""
+    try:
+        v = node.get("core_architecture")
+    except Exception:
+        v = None
+    if v is None:
+        return ""
+    return str(v).strip()
+
+
 # 向量检索（与 text-embedding-3-small dimensions=1536 一致）
 _PAPER_VECTOR_INDEX = "paper_embedding"
-_VECTOR_MIN_SCORE = 0.3
+# 绝对下限：过低会导致「搜一个词几乎返回全库」（同类论文向量仍较接近）
+_VECTOR_MIN_SCORE = 0.42
+# 相对下限：保留得分不低于「本轮第一名 × 该系数」的论文，压低弱相关尾巴
+_VECTOR_RELATIVE_FLOOR = 0.88
 _VECTOR_SCAN_CAP = 3000
 _EMBEDDING_DIM = 1536
+_QUERY_VEC_CACHE: Dict[str, tuple[List[float], float]] = {}
+_QUERY_VEC_TTL_SEC = 300.0
+_QUERY_VEC_CACHE_MAX = 256
+
+# 管理端 JSON 快照：与 MERGE 键一致，便于跨库迁移
+_SNAPSHOT_FORMAT = "arxprism-neo4j-snapshot"
+_SNAPSHOT_VERSION = 1
+
+_LABEL_PRIORITY = (
+    "Paper",
+    "Method",
+    "Task",
+    "Author",
+    "Dataset",
+    # "Innovation", # Removed
+    # "Limitation", # Removed
+    "Metric",
+)
+
+_LABEL_MERGE_KEYS: Dict[str, Tuple[str, ...]] = {
+    "Paper": ("arxiv_id",),
+    "Author": ("name",),
+    "Task": ("name",),
+    "Method": ("name",),
+    "Dataset": ("name",),
+    # "Innovation": ("content",), # Removed
+    # "Limitation": ("content",), # Removed
+    "Metric": ("name",),
+}
+
+_REL_TYPES: Dict[str, Tuple[str, Tuple[str, ...], str, Tuple[str, ...]]] = {
+    "WRITTEN_BY": ("Paper", ("arxiv_id",), "Author", ("name",)),
+    "ADDRESSES": ("Paper", ("arxiv_id",), "Task", ("name",)),
+    "PROPOSES": ("Paper", ("arxiv_id",), "Method", ("name",)),
+    "APPLIED_TO": ("Method", ("name",), "Task", ("name",)),
+    "EVALUATED_ON": ("Paper", ("arxiv_id",), "Dataset", ("name",)),
+    "IMPROVES_UPON": ("Method", ("name",), "Method", ("name",)),
+    "EVOLVED_FROM": ("Method", ("name",), "Method", ("name",)),
+    # "HAS_INNOVATION": ("Paper", ("arxiv_id",), "Innovation", ("content",)), # Removed
+    # "HAS_LIMITATION": ("Paper", ("arxiv_id",), "Limitation", ("content",)), # Removed
+    "MEASURES": ("Paper", ("arxiv_id",), "Metric", ("name",)),
+}
+
+
+def _jsonify_neo4j_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, list):
+        return [_jsonify_neo4j_value(x) for x in value]
+    if isinstance(value, dict):
+        return {str(k): _jsonify_neo4j_value(v) for k, v in value.items()}
+    if hasattr(value, "iso_format"):
+        try:
+            return value.iso_format()
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _jsonify_node_properties(props: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: _jsonify_neo4j_value(v) for k, v in dict(props).items()}
+
+
+def _primary_label(labels: List[str]) -> Optional[str]:
+    s = set(labels or [])
+    for cand in _LABEL_PRIORITY:
+        if cand in s:
+            return cand
+    return None
+
+
+def _endpoint_from_node(labels: List[str], props: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    lbl = _primary_label(labels)
+    if not lbl or lbl not in _LABEL_MERGE_KEYS:
+        return None
+    keys = _LABEL_MERGE_KEYS[lbl]
+    match: Dict[str, Any] = {}
+    for k in keys:
+        if k not in props:
+            return None
+        match[k] = _jsonify_neo4j_value(props[k])
+    return {"label": lbl, "match": match}
 
 
 # =============================================================================
@@ -212,6 +317,7 @@ class Neo4jClient:
             (extraction.reasoning_process or "") if extraction is not None else ""
         )
         summary_text = data.summary or ""
+        summary_zh_text = (data.summary_zh or "").strip()
         emb = data.embedding
         has_embedding = bool(
             emb and isinstance(emb, list) and len(emb) == _EMBEDDING_DIM
@@ -231,6 +337,7 @@ class Neo4jClient:
                 p.url = $url,
                 p.core_problem = $core_problem,
                 p.summary = $summary,
+                p.summary_zh = $summary_zh,
                 p.reasoning_process = $reasoning_process,
                 p.embedding = CASE WHEN $has_embedding THEN $embedding END
             ON MATCH SET
@@ -239,6 +346,7 @@ class Neo4jClient:
                 p.url = $url,
                 p.core_problem = $core_problem,
                 p.summary = $summary,
+                p.summary_zh = $summary_zh,
                 p.reasoning_process = $reasoning_process,
                 p.embedding = CASE WHEN $has_embedding THEN $embedding ELSE p.embedding END
             """,
@@ -248,6 +356,7 @@ class Neo4jClient:
             url=f"https://arxiv.org/abs/{paper_id}",
             core_problem=core_problem,
             summary=summary_text,
+            summary_zh=summary_zh_text,
             reasoning_process=reasoning_process,
             has_embedding=has_embedding,
             embedding=embedding_param,
@@ -279,7 +388,7 @@ class Neo4jClient:
         if extraction is None:
             logger.info(
                 f"Paper {paper_id}: extraction_data is None; "
-                "skipped Method/Dataset/Innovation/Limitation edges"
+                "skipped Method/Dataset/EVOLVED_FROM edges"
             )
             return
 
@@ -322,8 +431,18 @@ class Neo4jClient:
                 await tx.run(
                     """
                     MERGE (m:Method {name: $name})
-                    ON CREATE SET m.description = $description, m.original_name = $original_name
-                    ON MATCH SET m.description = $description, m.original_name = $original_name
+                    ON CREATE SET
+                        m.description = $description,
+                        m.original_name = $original_name,
+                        m.core_architecture = $core_architecture,
+                        m.key_innovations = $key_innovations,
+                        m.limitations = $limitations
+                    ON MATCH SET
+                        m.description = $description,
+                        m.original_name = $original_name,
+                        m.core_architecture = $core_architecture,
+                        m.key_innovations = $key_innovations,
+                        m.limitations = $limitations
                     WITH m
                     MATCH (p:Paper {arxiv_id: $arxiv_id})
                     MERGE (p)-[:PROPOSES]->(m)
@@ -331,6 +450,9 @@ class Neo4jClient:
                     name=normalized_method,
                     original_name=method_name,
                     description=extraction.proposed_method.description,
+                    core_architecture=extraction.proposed_method.core_architecture,
+                    key_innovations=extraction.proposed_method.key_innovations,
+                    limitations=extraction.proposed_method.limitations,
                     arxiv_id=paper_id
                 )
 
@@ -343,6 +465,55 @@ class Neo4jClient:
                         """,
                         method_name=normalized_method,
                         task_name=normalized_task,
+                    )
+
+                # =========================================================================
+                # 3b. evolution_lineages → 祖先 Method + (主方法)-[:EVOLVED_FROM]->(祖先)
+                # =========================================================================
+                for lin in extraction.knowledge_graph_nodes.evolution_lineages:
+                    ancestor_raw = (lin.ancestor_method or "").strip()
+                    if not ancestor_raw or ancestor_raw.upper() == "NOT_MENTIONED":
+                        continue
+                    normalized_ancestor = _normalize_name(ancestor_raw)
+                    if not normalized_ancestor:
+                        logger.warning(
+                            "Skipping empty normalized ancestor_method: %s", ancestor_raw
+                        )
+                        continue
+                    if normalized_ancestor == normalized_method:
+                        logger.debug(
+                            "Skipping EVOLVED_FROM self-loop: %s", normalized_method
+                        )
+                        continue
+                    reason_text = (lin.evolution_reason or "").strip()
+                    logger.debug(
+                        "MERGing EVOLVED_FROM: %s -> %s",
+                        method_name,
+                        ancestor_raw,
+                    )
+                    await tx.run(
+                        """
+                        MERGE (child:Method {name: $child_name})
+                        MERGE (anc:Method {name: $ancestor_name})
+                        ON CREATE SET
+                            anc.original_name = $ancestor_original_name,
+                            anc.first_appeared = $published_date
+                        ON MATCH SET
+                            anc.original_name = $ancestor_original_name,
+                            anc.first_appeared = CASE
+                                WHEN $published_date < coalesce(anc.first_appeared, $published_date)
+                                THEN $published_date
+                                ELSE anc.first_appeared
+                            END
+                        MERGE (child)-[r:EVOLVED_FROM]->(anc)
+                        SET r.reason = $evolution_reason,
+                            r.discovered_at = $published_date
+                        """,
+                        child_name=normalized_method,
+                        ancestor_name=normalized_ancestor,
+                        ancestor_original_name=ancestor_raw,
+                        published_date=published_date,
+                        evolution_reason=reason_text,
                     )
 
                 # =========================================================================
@@ -430,56 +601,6 @@ class Neo4jClient:
                         dataset=dataset_raw,
                         metrics_improvement=metrics_text,
                     )
-
-        # =========================================================================
-        # 7. MERGE Innovation 节点和 HAS_INNOVATION 关系
-        # =========================================================================
-        for innovation_content in extraction.critical_analysis.key_innovations:
-            normalized_content = _normalize_name(innovation_content)
-
-            if not normalized_content:
-                logger.warning(f"Skipping empty normalized innovation: {innovation_content}")
-                continue
-
-            logger.debug(f"MERGing Innovation: {innovation_content[:50]}...")
-            await tx.run(
-                """
-                MERGE (i:Innovation {content: $content})
-                ON CREATE SET i.original_content = $original_content
-                ON MATCH SET i.original_content = $original_content
-                WITH i
-                MATCH (p:Paper {arxiv_id: $arxiv_id})
-                MERGE (p)-[:HAS_INNOVATION]->(i)
-                """,
-                content=normalized_content,
-                original_content=innovation_content,
-                arxiv_id=paper_id
-            )
-
-        # =========================================================================
-        # 8. MERGE Limitation 节点和 HAS_LIMITATION 关系
-        # =========================================================================
-        for limitation_content in extraction.critical_analysis.limitations:
-            normalized_content = _normalize_name(limitation_content)
-
-            if not normalized_content:
-                logger.warning(f"Skipping empty normalized limitation: {limitation_content}")
-                continue
-
-            logger.debug(f"MERGing Limitation: {limitation_content[:50]}...")
-            await tx.run(
-                """
-                MERGE (l:Limitation {content: $content})
-                ON CREATE SET l.original_content = $original_content
-                ON MATCH SET l.original_content = $original_content
-                WITH l
-                MATCH (p:Paper {arxiv_id: $arxiv_id})
-                MERGE (p)-[:HAS_LIMITATION]->(l)
-                """,
-                content=normalized_content,
-                original_content=limitation_content,
-                arxiv_id=paper_id
-            )
 
         logger.debug(f"Completed upsert for paper: {paper_id}")
 
@@ -588,121 +709,171 @@ class Neo4jClient:
         获取方法的技术进化树.
 
         GET /api/v1/graph/evolution?method_name={name}
-        向上追溯 3 层祖先，向下扩展 3 层后代。
+        沿 [:EVOLVED_FROM] 向上追溯 3 层祖先（子方法继承自祖先），向下 3 层后代。
 
-        使用原生 Cypher 查询 [:IMPROVES_UPON] 关系。
-
-        Args:
-            method_name: 目标方法名称
-
-        Returns:
-            Dict with 'nodes' and 'links' in D3.js/ECharts format
+        解析顺序：1) 归一化键 m.name；2) 展示名 m.original_name（与论文列表/详情一致）。
+        曾用 UNWIND 空列表会丢掉整行，导致「索引里有方法却查不出树」；已改为单次 RETURN。
         """
-        logger.info(f"Fetching evolution tree for method: {method_name}")
-        normalized_name = _normalize_name(method_name)
+        raw = (method_name or "").strip()
+        normalized_name = _normalize_name(raw)
+        logger.info(
+            "Fetching evolution tree raw=%r normalized=%r", raw, normalized_name
+        )
 
         try:
             if self._driver is None:
                 await self.connect()
             async with self._driver.session() as session:
-                result = await session.run(
+                mres = await session.run(
                     """
-                    MATCH (target:Method {name: $method_name})
-                    OPTIONAL MATCH path_ancestors = (target)-[:IMPROVES_UPON*1..3]-(ancestor:Method)
-                    OPTIONAL MATCH path_descendants = (target)<-[:IMPROVES_UPON*1..3]-(descendant:Method)
-                    WITH collect(DISTINCT ancestor) AS ancestors,
-                         collect(DISTINCT descendant) AS descendants,
-                         target
-                    UNWIND ancestors AS a
-                    WITH collect(DISTINCT a) AS ancestors, descendants, target
-                    UNWIND descendants AS d
-                    WITH ancestors, collect(DISTINCT d) AS descendants, target
-                    RETURN ancestors, descendants, target
+                    MATCH (m:Method)
+                    WHERE ($norm <> '' AND m.name = $norm)
+                       OR ($raw <> '' AND toLower(trim(coalesce(m.original_name, '')))
+                            = toLower(trim($raw)))
+                    RETURN m AS target
+                    ORDER BY
+                      CASE WHEN $norm <> '' AND m.name = $norm THEN 0 ELSE 1 END
+                    LIMIT 1
                     """,
-                    method_name=normalized_name
+                    norm=normalized_name or "",
+                    raw=raw,
                 )
+                mrow = await mres.single()
+                if not mrow or mrow.get("target") is None:
+                    logger.info("Evolution tree: no Method node for %r", raw)
+                    return {"nodes": [], "links": []}
 
-                records = await result.data()
+                target_key = mrow["target"]["name"]
+                if not target_key:
+                    return {"nodes": [], "links": []}
+
+                eres = await session.run(
+                    """
+                    MATCH (t:Method {name: $tk})
+                    OPTIONAL MATCH (t)-[:EVOLVED_FROM*1..3]->(a:Method)
+                    WITH t, collect(DISTINCT a) AS araw
+                    OPTIONAL MATCH (t)<-[:EVOLVED_FROM*1..3]-(d:Method)
+                    WITH t, araw, collect(DISTINCT d) AS draw
+                    RETURN t,
+                      [x IN araw WHERE x IS NOT NULL AND x <> t] AS ancestors,
+                      [x IN draw WHERE x IS NOT NULL AND x <> t] AS descendants
+                    """,
+                    tk=target_key,
+                )
+                erow = await eres.single()
+                if not erow:
+                    return {"nodes": [], "links": []}
+
+                target = erow["t"]
+                ancestors = list(erow.get("ancestors") or [])
+                descendants = list(erow.get("descendants") or [])
+
                 nodes: List[Dict[str, Any]] = []
                 links: List[Dict[str, Any]] = []
                 seen_methods: set = set()
 
-                for record in records:
-                    ancestors = record.get("ancestors", []) or []
-                    descendants = record.get("descendants", []) or []
-                    target = record.get("target")
-
-                    # Add target method (generation 0)
-                    if target:
-                        nodes.append({
+                if target:
+                    nodes.append(
+                        {
                             "id": target["name"],
                             "name": target.get("original_name") or target["name"],
-                            "generation": 0
-                        })
-                        seen_methods.add(target["name"])
+                            "generation": 0,
+                            "core_architecture": _method_core_architecture(target),
+                        }
+                    )
+                    seen_methods.add(target["name"])
 
-                    # Add ancestors (negative generations, going back)
-                    for i, ancestor in enumerate(ancestors):
-                        if ancestor and ancestor["name"] not in seen_methods:
-                            nodes.append({
-                                "id": ancestor["name"],
-                                "name": ancestor.get("original_name") or ancestor["name"],
-                                "generation": -(i + 1)
-                            })
-                            seen_methods.add(ancestor["name"])
+                # (child)-[:EVOLVED_FROM]->(ancestor)；generation = ±最短路径边数
+                for row in ancestor_rows:
+                    ancestor = row.get("a")
+                    depth = row.get("depth")
+                    if ancestor is None or depth is None:
+                        continue
+                    if ancestor["name"] in seen_methods:
+                        continue
+                    d_int = int(depth)
+                    nodes.append(
+                        {
+                            "id": ancestor["name"],
+                            "name": ancestor.get("original_name")
+                            or ancestor["name"],
+                            "generation": -d_int,
+                            "core_architecture": _method_core_architecture(ancestor),
+                        }
+                    )
+                    seen_methods.add(ancestor["name"])
+                    links.append(
+                        {
+                            "source": target["name"],
+                            "target": ancestor["name"],
+                            "relationshipType": "EVOLVED_FROM",
+                        }
+                    )
 
-                        # Link ancestor → target (IDs 必须与节点 id 一致：归一化 name)
-                        if ancestor and target:
-                            links.append({
-                                "source": ancestor["name"],
-                                "target": target["name"],
-                            })
-
-                    # Add descendants (positive generations, going forward)
-                    for i, descendant in enumerate(descendants):
-                        if descendant and descendant["name"] not in seen_methods:
-                            nodes.append({
-                                "id": descendant["name"],
-                                "name": descendant.get("original_name") or descendant["name"],
-                                "generation": i + 1
-                            })
-                            seen_methods.add(descendant["name"])
-
-                        # Link target → descendant
-                        if descendant and target:
-                            links.append({
-                                "source": target["name"],
-                                "target": descendant["name"],
-                            })
+                for row in descendant_rows:
+                    descendant = row.get("d")
+                    depth = row.get("depth")
+                    if descendant is None or depth is None:
+                        continue
+                    if descendant["name"] in seen_methods:
+                        continue
+                    d_int = int(depth)
+                    nodes.append(
+                        {
+                            "id": descendant["name"],
+                            "name": descendant.get("original_name")
+                            or descendant["name"],
+                            "generation": d_int,
+                            "core_architecture": _method_core_architecture(descendant),
+                        }
+                    )
+                    seen_methods.add(descendant["name"])
+                    links.append(
+                        {
+                            "source": descendant["name"],
+                            "target": target["name"],
+                            "relationshipType": "EVOLVED_FROM",
+                        }
+                    )
 
                 id_list = list(seen_methods)
                 if id_list:
                     res_edges = await session.run(
                         """
-                        MATCH (s:Method)-[r:IMPROVES_UPON]->(t:Method)
+                        MATCH (s:Method)-[r:EVOLVED_FROM]->(t:Method)
                         WHERE s.name IN $ids AND t.name IN $ids
                         RETURN s.name AS source, t.name AS target,
+                               coalesce(r.reason, '') AS reason,
+                               coalesce(toString(r.discovered_at), '') AS discovered_at,
                                coalesce(r.dataset, '') AS dataset,
                                coalesce(r.metrics_improvement, '') AS metrics_improvement
                         """,
                         ids=id_list,
                     )
                     edge_meta: Dict[tuple, Dict[str, str]] = {}
-                    for erow in await res_edges.data():
-                        key = (erow["source"], erow["target"])
+                    for edge_rec in await res_edges.data():
+                        key = (edge_rec["source"], edge_rec["target"])
                         if key not in edge_meta:
                             edge_meta[key] = {
-                                "dataset": erow.get("dataset") or "",
-                                "metrics_improvement": erow.get("metrics_improvement")
+                                "reason": edge_rec.get("reason") or "",
+                                "discovered_at": edge_rec.get("discovered_at") or "",
+                                "dataset": edge_rec.get("dataset") or "",
+                                "metrics_improvement": edge_rec.get(
+                                    "metrics_improvement"
+                                )
                                 or "",
                             }
                     for link in links:
                         meta = edge_meta.get((link["source"], link["target"]))
                         if meta:
+                            link["reason"] = meta["reason"]
+                            link["discovered_at"] = meta["discovered_at"]
                             link["dataset"] = meta["dataset"]
                             link["metrics_improvement"] = meta["metrics_improvement"]
 
-                logger.info(f"Evolution tree: {len(nodes)} nodes, {len(links)} links")
+                logger.info(
+                    "Evolution tree: %s nodes, %s links", len(nodes), len(links)
+                )
                 return {"nodes": nodes, "links": links}
 
         except Exception as e:
@@ -712,8 +883,8 @@ class Neo4jClient:
     async def list_evolution_methods(self) -> Dict[str, Any]:
         """
         供前端「发现」进化树入口：
-        - with_evolution: 至少参与一条 IMPROVES_UPON 的 Method（推荐点击）
-        - other_methods: 图中有节点、但当前无任何 IMPROVES_UPON 关联的方法（仍可尝试以根查询）
+        - with_evolution: 至少参与一条 EVOLVED_FROM 的 Method（推荐点击）
+        - other_methods: 图中有节点、但当前无任何 EVOLVED_FROM 关联的方法（仍可尝试以根查询）
         """
         if self._driver is None:
             await self.connect()
@@ -727,7 +898,7 @@ class Neo4jClient:
             async with self._driver.session() as session:
                 res1 = await session.run(
                     """
-                    MATCH (m:Method)-[r:IMPROVES_UPON]-(:Method)
+                    MATCH (m:Method)-[r:EVOLVED_FROM]-(:Method)
                     WITH m, count(r) AS edge_count
                     RETURN m.name AS name_key,
                            coalesce(m.original_name, m.name) AS label,
@@ -748,7 +919,7 @@ class Neo4jClient:
                 res2 = await session.run(
                     """
                     MATCH (m:Method)
-                    WHERE NOT (m)-[:IMPROVES_UPON]-(:Method)
+                    WHERE NOT (m)-[:EVOLVED_FROM]-(:Method)
                     RETURN m.name AS name_key,
                            coalesce(m.original_name, m.name) AS label
                     ORDER BY toLower(label)
@@ -798,14 +969,36 @@ class Neo4jClient:
         return out
 
     async def _resolve_query_embedding(self, q_raw: str) -> Optional[List[float]]:
-        if not q_raw.strip():
+        key = (q_raw or "").strip().lower()
+        if not key:
             return None
+        if len(_QUERY_VEC_CACHE) >= _QUERY_VEC_CACHE_MAX:
+            _QUERY_VEC_CACHE.clear()
+        now = time.monotonic()
+        hit = _QUERY_VEC_CACHE.get(key)
+        if hit is not None:
+            vec, ts = hit
+            if now - ts <= _QUERY_VEC_TTL_SEC:
+                return vec
+            del _QUERY_VEC_CACHE[key]
+
         from src.services.llm_extractor import get_llm_extractor
 
         vec = await get_llm_extractor().generate_embedding(q_raw)
         if vec and len(vec) == _EMBEDDING_DIM:
+            _QUERY_VEC_CACHE[key] = (vec, now)
             return vec
         return None
+
+    @staticmethod
+    def _use_semantic_vector(
+        q_raw: str, search_mode: str, query_vector: Optional[List[float]]
+    ) -> bool:
+        if not q_raw.strip():
+            return False
+        if (search_mode or "semantic").strip().lower() == "keyword":
+            return False
+        return query_vector is not None
 
     async def search_papers(
         self,
@@ -813,10 +1006,11 @@ class Neo4jClient:
         limit: int = 20,
         offset: int = 0,
         task_topic: str = "",
+        search_mode: str = "semantic",
     ) -> List[Dict[str, Any]]:
         """
-        Hybrid 检索：有查询词且向量化成功时用向量索引；否则按时间倒序全量或关键词 CONTAINS。
-        task_topic 与列表/统计一致。
+        Hybrid 检索：语义模式在向量可用时用向量索引 + 相对阈值压尾巴；keyword 强制标题/摘要/方法 CONTAINS。
+        query 为空：按时间倒序浏览（仍受 task_topic 约束）。
         """
         q_raw = (query or "").strip()
         q_lower = q_raw.lower()
@@ -837,7 +1031,6 @@ class Neo4jClient:
              collect(DISTINCT coalesce(d.original_name, d.name)) AS datasets,
              collect(DISTINCT coalesce(mt.original_name, mt.name)) AS metrics,
              collect(DISTINCT coalesce(t.original_name, t.name)) AS tasks,
-             collect(DISTINCT coalesce(baseline.original_name, baseline.name)) AS baselines,
              collect(DISTINCT CASE WHEN baseline IS NOT NULL THEN {
                baseline: coalesce(baseline.original_name, baseline.name),
                dataset: imp.dataset,
@@ -859,10 +1052,13 @@ class Neo4jClient:
 
         try:
             async with self._driver.session() as session:
-                query_vector = await self._resolve_query_embedding(q_raw)
-                use_vector = bool(q_raw) and query_vector is not None
+                query_vector: Optional[List[float]] = None
+                if q_raw:
+                    query_vector = await self._resolve_query_embedding(q_raw)
+                use_vector = self._use_semantic_vector(q_raw, search_mode, query_vector)
 
                 if use_vector:
+                    assert query_vector is not None
                     topk = self._vector_scan_topk(offset, limit)
                     cypher = (
                         """
@@ -872,6 +1068,15 @@ class Neo4jClient:
                     OPTIONAL MATCH (p)-[:ADDRESSES]->(t0:Task)
                     WITH p, score, t0
                     WHERE $task_topic = "" OR coalesce(t0.original_name, t0.name, '(未标注主题)') = $task_topic
+                    WITH DISTINCT p, score
+                    ORDER BY score DESC
+                    WITH collect({p: p, score: score}) AS rows
+                    WITH rows, CASE WHEN size(rows) > 0 THEN rows[0].score ELSE 0.0 END AS top_score
+                    UNWIND rows AS row
+                    WITH row.p AS p, row.score AS score, top_score
+                    WHERE top_score > 0
+                      AND score >= top_score * $rel_floor
+                      AND score >= $min_score
                     WITH DISTINCT p, score
                     ORDER BY score DESC
                     SKIP $offset
@@ -886,6 +1091,7 @@ class Neo4jClient:
                         topk=topk,
                         query_vector=query_vector,
                         min_score=_VECTOR_MIN_SCORE,
+                        rel_floor=_VECTOR_RELATIVE_FLOOR,
                         task_topic=tt,
                         offset=offset,
                         limit=limit,
@@ -931,7 +1137,10 @@ class Neo4jClient:
             return []
 
     async def count_search_papers(
-        self, query: str = "", task_topic: str = ""
+        self,
+        query: str = "",
+        task_topic: str = "",
+        search_mode: str = "semantic",
     ) -> int:
         """与 search_papers 相同过滤条件下的命中总数。"""
         q_raw = (query or "").strip()
@@ -942,10 +1151,13 @@ class Neo4jClient:
 
         try:
             async with self._driver.session() as session:
-                query_vector = await self._resolve_query_embedding(q_raw)
-                use_vector = bool(q_raw) and query_vector is not None
+                query_vector: Optional[List[float]] = None
+                if q_raw:
+                    query_vector = await self._resolve_query_embedding(q_raw)
+                use_vector = self._use_semantic_vector(q_raw, search_mode, query_vector)
 
                 if use_vector:
+                    assert query_vector is not None
                     topk = _VECTOR_SCAN_CAP
                     cypher = """
                     CALL db.index.vector.queryNodes($index_name, $topk, $query_vector)
@@ -954,6 +1166,15 @@ class Neo4jClient:
                     OPTIONAL MATCH (p)-[:ADDRESSES]->(t0:Task)
                     WITH p, score, t0
                     WHERE $task_topic = "" OR coalesce(t0.original_name, t0.name, '(未标注主题)') = $task_topic
+                    WITH DISTINCT p, score
+                    ORDER BY score DESC
+                    WITH collect({p: p, score: score}) AS rows
+                    WITH rows, CASE WHEN size(rows) > 0 THEN rows[0].score ELSE 0.0 END AS top_score
+                    UNWIND rows AS row
+                    WITH row.p AS p, row.score AS score, top_score
+                    WHERE top_score > 0
+                      AND score >= top_score * $rel_floor
+                      AND score >= $min_score
                     RETURN count(DISTINCT p) AS total
                     """
                     result = await session.run(
@@ -962,6 +1183,7 @@ class Neo4jClient:
                         topk=topk,
                         query_vector=query_vector,
                         min_score=_VECTOR_MIN_SCORE,
+                        rel_floor=_VECTOR_RELATIVE_FLOOR,
                         task_topic=tt,
                     )
                 else:
@@ -986,7 +1208,10 @@ class Neo4jClient:
             return 0
 
     async def get_topic_breakdown_for_search(
-        self, query: str = "", task_topic: str = ""
+        self,
+        query: str = "",
+        task_topic: str = "",
+        search_mode: str = "semantic",
     ) -> List[Dict[str, Any]]:
         """
         与 search_papers 相同的论文集合上，按 ADDRESSES→Task 标签聚合篇数。
@@ -999,10 +1224,13 @@ class Neo4jClient:
 
         try:
             async with self._driver.session() as session:
-                query_vector = await self._resolve_query_embedding(q_raw)
-                use_vector = bool(q_raw) and query_vector is not None
+                query_vector: Optional[List[float]] = None
+                if q_raw:
+                    query_vector = await self._resolve_query_embedding(q_raw)
+                use_vector = self._use_semantic_vector(q_raw, search_mode, query_vector)
 
                 if use_vector:
+                    assert query_vector is not None
                     topk = _VECTOR_SCAN_CAP
                     cypher = """
                     CALL db.index.vector.queryNodes($index_name, $topk, $query_vector)
@@ -1011,6 +1239,15 @@ class Neo4jClient:
                     OPTIONAL MATCH (p)-[:ADDRESSES]->(t0:Task)
                     WITH p, score, t0
                     WHERE $task_topic = "" OR coalesce(t0.original_name, t0.name, '(未标注主题)') = $task_topic
+                    WITH DISTINCT p, score
+                    ORDER BY score DESC
+                    WITH collect({p: p, score: score}) AS rows
+                    WITH rows, CASE WHEN size(rows) > 0 THEN rows[0].score ELSE 0.0 END AS top_score
+                    UNWIND rows AS row
+                    WITH row.p AS p, row.score AS score, top_score
+                    WHERE top_score > 0
+                      AND score >= top_score * $rel_floor
+                      AND score >= $min_score
                     WITH DISTINCT p
                     OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
                     WITH coalesce(t.original_name, t.name, '(未标注主题)') AS topic, p
@@ -1025,6 +1262,7 @@ class Neo4jClient:
                         topk=topk,
                         query_vector=query_vector,
                         min_score=_VECTOR_MIN_SCORE,
+                        rel_floor=_VECTOR_RELATIVE_FLOOR,
                         task_topic=tt,
                     )
                 else:
@@ -1065,6 +1303,7 @@ class Neo4jClient:
         self,
         search_query: str = "",
         topic_filter: str = "",
+        search_mode: str = "semantic",
     ) -> Dict[str, Any]:
         """
         图库概览：论文数、作者规模、作者关系、按 Task 聚类。
@@ -1118,7 +1357,7 @@ class Neo4jClient:
 
                 if use_filtered_topics:
                     out["by_topic"] = await self.get_topic_breakdown_for_search(
-                        query=sq, task_topic=tf
+                        query=sq, task_topic=tf, search_mode=search_mode
                     )
                 else:
                     r5 = await session.run(
@@ -1163,8 +1402,6 @@ class Neo4jClient:
         MATCH (p:Paper {arxiv_id: $arxiv_id})
         OPTIONAL MATCH (p)-[:WRITTEN_BY]->(a:Author)
         OPTIONAL MATCH (p)-[:PROPOSES]->(m:Method)
-        OPTIONAL MATCH (p)-[:HAS_INNOVATION]->(i:Innovation)
-        OPTIONAL MATCH (p)-[:HAS_LIMITATION]->(l:Limitation)
         OPTIONAL MATCH (p)-[:EVALUATED_ON]->(d:Dataset)
         OPTIONAL MATCH (p)-[:MEASURES]->(mt:Metric)
         OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
@@ -1176,14 +1413,17 @@ class Neo4jClient:
           p.published_date AS published_date,
           p.core_problem AS core_problem,
           p.summary AS summary,
+          coalesce(p.summary_zh, '') AS summary_zh,
           coalesce(p.reasoning_process, '') AS reasoning_process,
           collect(DISTINCT coalesce(a.original_name, a.name)) AS authors,
           collect(DISTINCT {
             name: coalesce(m.original_name, m.name),
-            description: m.description
+            name_key: m.name,
+            description: m.description,
+            core_architecture: m.core_architecture,
+            key_innovations: m.key_innovations,
+            limitations: m.limitations
           }) AS methods,
-          collect(DISTINCT coalesce(i.original_content, i.content)) AS innovations,
-          collect(DISTINCT coalesce(l.original_content, l.content)) AS limitations,
           collect(DISTINCT coalesce(baseline.original_name, baseline.name)) AS baselines,
           collect(DISTINCT coalesce(d.original_name, d.name)) AS datasets,
           collect(DISTINCT coalesce(mt.original_name, mt.name)) AS metrics,
@@ -1204,8 +1444,23 @@ class Neo4jClient:
                 return None
 
             row = rows[0]
-            # 提取方法名称列表
-            method_names = [m["name"] for m in row["methods"] if m.get("name")]
+            method_entries = [
+                m
+                for m in (row.get("methods") or [])
+                if m and isinstance(m, dict) and m.get("name")
+            ]
+            method_names = [m["name"] for m in method_entries]
+            proposed_method_key = (
+                (method_entries[0].get("name_key") or "").strip()
+                if method_entries
+                else ""
+            )
+            # Extract new method properties
+            proposed_method_description = (method_entries[0].get("description") or "") if method_entries else ""
+            proposed_method_architecture = (method_entries[0].get("core_architecture") or "") if method_entries else ""
+            proposed_method_innovations = (method_entries[0].get("key_innovations") or []) if method_entries else []
+            proposed_method_limitations = (method_entries[0].get("limitations") or []) if method_entries else []
+
             author_list = [x for x in row.get("authors") or [] if x]
             experiment_comparisons = self._normalize_comparison_rows(
                 row.get("comparison_rows")
@@ -1217,11 +1472,17 @@ class Neo4jClient:
                 "published_date": row.get("published_date", ""),
                 "core_problem": row.get("core_problem", ""),
                 "summary": row.get("summary", ""),
+                "summary_zh": row.get("summary_zh") or "",
                 "reasoning_process": row.get("reasoning_process") or "",
                 "authors": author_list,
                 "proposed_method": method_names[0] if method_names else "",
-                "innovations": [i for i in row["innovations"] if i],
-                "limitations": [l for l in row["limitations"] if l],
+                "proposed_method_name_key": proposed_method_key,
+                "proposed_method_description": proposed_method_description,
+                "proposed_method_architecture": proposed_method_architecture,
+                "proposed_method_innovations": proposed_method_innovations,
+                "proposed_method_limitations": proposed_method_limitations,
+                "innovations": list(proposed_method_innovations),
+                "limitations": list(proposed_method_limitations),
                 "baselines": [b for b in row["baselines"] if b],
                 "datasets": [d for d in row["datasets"] if d],
                 "metrics": [m for m in row["metrics"] if m],
@@ -1257,7 +1518,7 @@ class Neo4jClient:
     async def _merge_method_alias_in_tx(tx: Any, primary: str, alias: str) -> bool:
         """
         在写事务内将 alias Method 的边迁到 primary 后 DETACH DELETE alias。
-        覆盖 PROPOSES、IMPROVES_UPON（入/出）、APPLIED_TO；不依赖 APOC。
+        覆盖 PROPOSES、IMPROVES_UPON（入/出）、EVOLVED_FROM（入/出）、APPLIED_TO；不依赖 APOC。
         """
         probe = await tx.run(
             """
@@ -1307,6 +1568,34 @@ class Neo4jClient:
             MATCH (alias)-[r:IMPROVES_UPON]->(tgt:Method)
             WITH primary, alias, tgt, r
             MERGE (primary)-[nr:IMPROVES_UPON]->(tgt)
+            SET nr += properties(r)
+            DELETE r
+            """,
+            primary=primary,
+            alias=alias,
+        )
+        await tx.run(
+            """
+            MATCH (primary:Method {name: $primary})
+            MATCH (alias:Method {name: $alias})
+            WHERE primary <> alias
+            MATCH (src:Method)-[r:EVOLVED_FROM]->(alias)
+            WITH primary, alias, src, r
+            MERGE (src)-[nr:EVOLVED_FROM]->(primary)
+            SET nr += properties(r)
+            DELETE r
+            """,
+            primary=primary,
+            alias=alias,
+        )
+        await tx.run(
+            """
+            MATCH (primary:Method {name: $primary})
+            MATCH (alias:Method {name: $alias})
+            WHERE primary <> alias
+            MATCH (alias)-[r:EVOLVED_FROM]->(tgt:Method)
+            WITH primary, alias, tgt, r
+            MERGE (primary)-[nr:EVOLVED_FROM]->(tgt)
             SET nr += properties(r)
             DELETE r
             """,
@@ -1377,6 +1666,383 @@ class Neo4jClient:
         async with self._driver.session() as session:
             await session.execute_write(work)
         return merged_count
+
+    async def export_graph_snapshot(
+        self, *, include_embeddings: bool = True
+    ) -> Dict[str, Any]:
+        """
+        导出当前 Neo4j 全库为 JSON 快照（节点 + 有向关系），便于备份与迁移。
+
+        关系端点使用与 MERGE 一致的业务键（如 Paper.arxiv_id），不依赖 elementId。
+        """
+        if self._driver is None:
+            await self.connect()
+        if self._driver is None:
+            raise RuntimeError("Neo4j driver not available")
+
+        nodes: List[Dict[str, Any]] = []
+        relationships: List[Dict[str, Any]] = []
+
+        async with self._driver.session() as session:
+            nres = await session.run(
+                """
+                MATCH (n)
+                RETURN labels(n) AS labels, properties(n) AS properties
+                """
+            )
+            async for rec in nres:
+                labels = list(rec["labels"])
+                props = dict(rec["properties"])
+                if not include_embeddings:
+                    props.pop("embedding", None)
+                nodes.append(
+                    {
+                        "labels": labels,
+                        "properties": _jsonify_node_properties(props),
+                    }
+                )
+
+            rres = await session.run(
+                """
+                MATCH (a)-[r]->(b)
+                RETURN labels(a) AS la, properties(a) AS pa,
+                       type(r) AS rt, properties(r) AS pr,
+                       labels(b) AS lb, properties(b) AS pb
+                """
+            )
+            async for rec in rres:
+                la = list(rec["la"])
+                lb = list(rec["lb"])
+                pa = dict(rec["pa"])
+                pb = dict(rec["pb"])
+                rt = rec["rt"]
+                pr = dict(rec["pr"])
+                start_ep = _endpoint_from_node(la, pa)
+                end_ep = _endpoint_from_node(lb, pb)
+                if not start_ep or not end_ep:
+                    logger.debug(
+                        "export snapshot: skip relationship %s (unmapped endpoint)",
+                        rt,
+                    )
+                    continue
+                if rt not in _REL_TYPES:
+                    logger.debug("export snapshot: skip unknown rel type %s", rt)
+                    continue
+                sl, _, el, _ = _REL_TYPES[str(rt)]
+                if start_ep["label"] != sl or end_ep["label"] != el:
+                    logger.debug(
+                        "export snapshot: skip %s rel endpoint mismatch %s->%s",
+                        rt,
+                        start_ep["label"],
+                        end_ep["label"],
+                    )
+                    continue
+                relationships.append(
+                    {
+                        "type": str(rt),
+                        "start": start_ep,
+                        "end": end_ep,
+                        "properties": _jsonify_node_properties(pr),
+                    }
+                )
+
+        return {
+            "format": _SNAPSHOT_FORMAT,
+            "version": _SNAPSHOT_VERSION,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "include_embeddings": include_embeddings,
+            "nodes": nodes,
+            "relationships": relationships,
+        }
+
+    async def _merge_snapshot_node_tx(self, tx: Any, lbl: str, props: Dict[str, Any]) -> bool:
+        keys = _LABEL_MERGE_KEYS[lbl]
+        for k in keys:
+            if k not in props:
+                return False
+        if lbl == "Paper":
+            await tx.run(
+                "MERGE (n:Paper {arxiv_id: $k}) SET n += $p",
+                k=props["arxiv_id"],
+                p=props,
+            )
+        elif lbl == "Author":
+            await tx.run(
+                "MERGE (n:Author {name: $k}) SET n += $p",
+                k=props["name"],
+                p=props,
+            )
+        elif lbl == "Task":
+            await tx.run(
+                "MERGE (n:Task {name: $k}) SET n += $p",
+                k=props["name"],
+                p=props,
+            )
+        elif lbl == "Method":
+            await tx.run(
+                "MERGE (n:Method {name: $k}) SET n += $p",
+                k=props["name"],
+                p=props,
+            )
+        elif lbl == "Dataset":
+            await tx.run(
+                "MERGE (n:Dataset {name: $k}) SET n += $p",
+                k=props["name"],
+                p=props,
+            )
+        # elif lbl == "Innovation": # Removed
+        #     await tx.run(
+        #         "MERGE (n:Innovation {content: $k}) SET n += $p",
+        #         k=props["content"],
+        #         p=props,
+        #     )
+        # elif lbl == "Limitation": # Removed
+        #     await tx.run(
+        #         "MERGE (n:Limitation {content: $k}) SET n += $p",
+        #         k=props["content"],
+        #         p=props,
+        #     )
+        elif lbl == "Metric":
+            await tx.run(
+                "MERGE (n:Metric {name: $k}) SET n += $p",
+                k=props["name"],
+                p=props,
+            )
+        else:
+            return False
+        return True
+
+    async def _merge_snapshot_rel_tx(self, tx: Any, rel: Dict[str, Any]) -> bool:
+        rt = rel.get("type")
+        if not isinstance(rt, str) or rt not in _REL_TYPES:
+            return False
+        sl, sk, el, ek = _REL_TYPES[rt]
+        st = rel.get("start") or {}
+        en = rel.get("end") or {}
+        rp = rel.get("properties") if isinstance(rel.get("properties"), dict) else {}
+        if st.get("label") != sl or en.get("label") != el:
+            return False
+        sm = st.get("match") or {}
+        em = en.get("match") or {}
+        if not isinstance(sm, dict) or not isinstance(em, dict):
+            return False
+        for k in sk:
+            if k not in sm:
+                return False
+        for k in ek:
+            if k not in em:
+                return False
+
+        if rt == "WRITTEN_BY":
+            await tx.run(
+                """
+                MATCH (a:Paper {arxiv_id: $sa})
+                MATCH (b:Author {name: $nb})
+                MERGE (a)-[r:WRITTEN_BY]->(b)
+                SET r += $rp
+                """,
+                sa=sm["arxiv_id"],
+                nb=em["name"],
+                rp=rp,
+            )
+        elif rt == "ADDRESSES":
+            await tx.run(
+                """
+                MATCH (a:Paper {arxiv_id: $sa})
+                MATCH (b:Task {name: $nb})
+                MERGE (a)-[r:ADDRESSES]->(b)
+                SET r += $rp
+                """,
+                sa=sm["arxiv_id"],
+                nb=em["name"],
+                rp=rp,
+            )
+        elif rt == "PROPOSES":
+            await tx.run(
+                """
+                MATCH (a:Paper {arxiv_id: $sa})
+                MATCH (b:Method {name: $nb})
+                MERGE (a)-[r:PROPOSES]->(b)
+                SET r += $rp
+                """,
+                sa=sm["arxiv_id"],
+                nb=em["name"],
+                rp=rp,
+            )
+        elif rt == "APPLIED_TO":
+            await tx.run(
+                """
+                MATCH (a:Method {name: $sa})
+                MATCH (b:Task {name: $nb})
+                MERGE (a)-[r:APPLIED_TO]->(b)
+                SET r += $rp
+                """,
+                sa=sm["name"],
+                nb=em["name"],
+                rp=rp,
+            )
+        elif rt == "EVALUATED_ON":
+            await tx.run(
+                """
+                MATCH (a:Paper {arxiv_id: $sa})
+                MATCH (b:Dataset {name: $nb})
+                MERGE (a)-[r:EVALUATED_ON]->(b)
+                SET r += $rp
+                """,
+                sa=sm["arxiv_id"],
+                nb=em["name"],
+                rp=rp,
+            )
+        elif rt == "IMPROVES_UPON":
+            await tx.run(
+                """
+                MATCH (a:Method {name: $sa})
+                MATCH (b:Method {name: $nb})
+                MERGE (a)-[r:IMPROVES_UPON]->(b)
+                SET r += $rp
+                """,
+                sa=sm["name"],
+                nb=em["name"],
+                rp=rp,
+            )
+        elif rt == "EVOLVED_FROM":
+            await tx.run(
+                """
+                MATCH (a:Method {name: $sa})
+                MATCH (b:Method {name: $nb})
+                MERGE (a)-[r:EVOLVED_FROM]->(b)
+                SET r += $rp
+                """,
+                sa=sm["name"],
+                nb=em["name"],
+                rp=rp,
+            )
+        # elif rt == "HAS_INNOVATION": # Removed
+        #     await tx.run(
+        #         """
+        #         MATCH (a:Paper {arxiv_id: $sa})
+        #         MATCH (b:Innovation {content: $nb})
+        #         MERGE (a)-[r:HAS_INNOVATION]->(b)
+        #         SET r += $rp
+        #         """,
+        #         sa=sm["arxiv_id"],
+        #         nb=em["content"],
+        #         rp=rp,
+        #     )
+        # elif rt == "HAS_LIMITATION": # Removed
+        #     await tx.run(
+        #         """
+        #         MATCH (a:Paper {arxiv_id: $sa})
+        #         MATCH (b:Limitation {content: $nb})
+        #         MERGE (a)-[r:HAS_LIMITATION]->(b)
+        #         SET r += $rp
+        #         """,
+        #         sa=sm["arxiv_id"],
+        #         nb=em["content"],
+        #         rp=rp,
+        #     )
+        elif rt == "MEASURES":
+            await tx.run(
+                """
+                MATCH (a:Paper {arxiv_id: $sa})
+                MATCH (b:Metric {name: $nb})
+                MERGE (a)-[r:MEASURES]->(b)
+                SET r += $rp
+                """,
+                sa=sm["arxiv_id"],
+                nb=em["name"],
+                rp=rp,
+            )
+        else:
+            return False
+        return True
+
+    async def import_graph_snapshot(
+        self, payload: Dict[str, Any], *, replace: bool = False
+    ) -> Dict[str, int]:
+        """
+        从 export_graph_snapshot 生成的 JSON 恢复图数据。
+
+        merge：与现有数据按 MERGE 键合并；replace：先清空 Neo4j 再导入（不清理 Redis）。
+        """
+        if payload.get("format") != _SNAPSHOT_FORMAT:
+            raise ValueError(
+                "invalid snapshot: expected format 'arxprism-neo4j-snapshot'"
+            )
+        ver = payload.get("version")
+        if ver != _SNAPSHOT_VERSION:
+            raise ValueError(
+                f"unsupported snapshot version (expected {_SNAPSHOT_VERSION}, got {ver!r})"
+            )
+        nodes = payload.get("nodes")
+        rels = payload.get("relationships")
+        if not isinstance(nodes, list) or not isinstance(rels, list):
+            raise ValueError("snapshot must contain 'nodes' and 'relationships' arrays")
+
+        if self._driver is None:
+            await self.connect()
+        if self._driver is None:
+            raise RuntimeError("Neo4j driver not available")
+
+        if replace:
+            await self.wipe_all_graph_data()
+
+        stats: Dict[str, int] = {
+            "nodes_upserted": 0,
+            "relationships_upserted": 0,
+            "nodes_skipped": 0,
+            "relationships_skipped": 0,
+        }
+
+        async def work(tx: Any) -> None:
+            for entry in nodes:
+                if not isinstance(entry, dict):
+                    stats["nodes_skipped"] += 1
+                    continue
+                labels = entry.get("labels")
+                props = entry.get("properties")
+                if not isinstance(labels, list) or not isinstance(props, dict):
+                    stats["nodes_skipped"] += 1
+                    continue
+                lbl = _primary_label(labels)
+                if not lbl:
+                    stats["nodes_skipped"] += 1
+                    continue
+                ok = await self._merge_snapshot_node_tx(tx, lbl, props)
+                if ok:
+                    stats["nodes_upserted"] += 1
+                else:
+                    stats["nodes_skipped"] += 1
+            for rel in rels:
+                if not isinstance(rel, dict):
+                    stats["relationships_skipped"] += 1
+                    continue
+                ok = await self._merge_snapshot_rel_tx(tx, rel)
+                if ok:
+                    stats["relationships_upserted"] += 1
+                else:
+                    stats["relationships_skipped"] += 1
+
+        async with self._driver.session() as session:
+            await session.execute_write(work)
+
+        return stats
+
+    async def count_total_nodes(self) -> int:
+        """返回库中节点总数（用于管理态概览）。"""
+        if self._driver is None:
+            await self.connect()
+        if self._driver is None:
+            return 0
+        try:
+            async with self._driver.session() as session:
+                result = await session.run("MATCH (n) RETURN count(n) AS c")
+                rec = await result.single()
+                if rec and rec.get("c") is not None:
+                    return int(rec["c"])
+        except Exception as e:
+            logger.warning("count_total_nodes failed: %s", e)
+        return 0
 
     async def wipe_all_graph_data(self) -> Dict[str, int]:
         """

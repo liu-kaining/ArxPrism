@@ -10,8 +10,10 @@ Reference: ARCHITECTURE.md Section 5 (扩展)
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from src.api.auth import CurrentUser, require_user
+from src.core.config import settings
 from src.models.schemas import APIResponse
 from src.models.task_models import (
     Task,
@@ -23,11 +25,78 @@ from src.models.task_models import (
     DomainPreset,
     list_domain_presets,
 )
+from src.services.supabase_backend import supabase_backend
 from src.services.task_manager import task_manager, get_task_manager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
+router = APIRouter(
+    prefix="/api/v1/tasks",
+    tags=["tasks"],
+    dependencies=[Depends(require_user)],
+)
+
+
+async def _consume_one_task_quota(user: CurrentUser) -> None:
+    """创建 / 重试任务前扣 1 点配额（AUTH_DISABLED 时跳过）。"""
+    if settings.auth_disabled:
+        return
+    if user.is_banned:
+        raise HTTPException(status_code=403, detail="Account banned")
+    if not supabase_backend.configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Task quota unavailable: Supabase not configured",
+        )
+    ok, reason = await supabase_backend.rpc_try_consume_task_quota(user.id)
+    if ok:
+        return
+    if reason == "no_profile":
+        raise HTTPException(
+            status_code=403,
+            detail="User profile missing; run Supabase SQL migration (handle_new_user)",
+        )
+    if reason == "banned":
+        raise HTTPException(status_code=403, detail="Account banned")
+    if reason == "quota_exhausted":
+        raise HTTPException(
+            status_code=402,
+            detail="Task quota exhausted; contact an administrator to refill.",
+        )
+    raise HTTPException(
+        status_code=503,
+        detail=f"Could not verify task quota: {reason or 'unknown'}",
+    )
+
+
+async def _dispatch_task_execution(
+    task_id: str,
+    query: str,
+    domain_preset: str,
+    max_results: int,
+) -> None:
+    from src.worker.tasks import get_celery_app, run_task_pipeline_task, execute_task_pipeline_async
+    import asyncio
+
+    celery_app = get_celery_app()
+    if celery_app is not None:
+        run_task_pipeline_task.delay(
+            task_id=task_id,
+            query=query,
+            domain_preset=domain_preset,
+            max_results=max_results,
+        )
+        logger.info(f"Task {task_id} dispatched to Celery worker")
+    else:
+        asyncio.create_task(
+            execute_task_pipeline_async(
+                task_id=task_id,
+                query=query,
+                domain_preset=domain_preset,
+                max_results=max_results,
+            )
+        )
+        logger.info(f"Task {task_id} started in-process (no Celery)")
 
 
 # =============================================================================
@@ -57,7 +126,10 @@ async def get_domain_presets() -> APIResponse:
 # =============================================================================
 
 @router.post("", response_model=APIResponse, status_code=201)
-async def create_task(request: TaskCreateRequest) -> APIResponse:
+async def create_task(
+    request: TaskCreateRequest,
+    user: CurrentUser = Depends(require_user),
+) -> APIResponse:
     """
     创建新任务.
 
@@ -75,41 +147,28 @@ async def create_task(request: TaskCreateRequest) -> APIResponse:
     logger.info(f"Creating task: query='{request.query}', domain='{request.domain_preset}'")
 
     try:
+        await _consume_one_task_quota(user)
+
         # 获取任务管理器
         manager = await get_task_manager()
 
-        # 创建任务
-        task = await manager.create_task(
-            query=request.query,
-            domain_preset=request.domain_preset,
-            max_results=request.max_results
-        )
-
-        # 触发后台任务执行 - 优先使用 Celery Worker
-        from src.worker.tasks import get_celery_app, run_task_pipeline_task, execute_task_pipeline_async
-        import asyncio
-
-        celery_app = get_celery_app()
-        if celery_app is not None:
-            # Celery 可用：发送到 Worker
-            run_task_pipeline_task.delay(
-                task_id=task.task_id,
+        try:
+            task = await manager.create_task(
                 query=request.query,
                 domain_preset=request.domain_preset,
-                max_results=request.max_results
+                max_results=request.max_results,
             )
-            logger.info(f"Task {task.task_id} dispatched to Celery worker")
-        else:
-            # Celery 不可用：在当前进程执行
-            asyncio.create_task(
-                execute_task_pipeline_async(
-                    task_id=task.task_id,
-                    query=request.query,
-                    domain_preset=request.domain_preset,
-                    max_results=request.max_results
-                )
-            )
-            logger.info(f"Task {task.task_id} started in-process (no Celery)")
+        except Exception:
+            if not settings.auth_disabled:
+                await supabase_backend.rpc_refund_task_quota(user.id)
+            raise
+
+        await _dispatch_task_execution(
+            task.task_id,
+            request.query,
+            request.domain_preset,
+            request.max_results,
+        )
 
         return APIResponse(
             code=201,
@@ -368,7 +427,10 @@ async def cancel_task(task_id: str) -> APIResponse:
 
 
 @router.post("/{task_id}/retry", response_model=APIResponse)
-async def retry_task(task_id: str) -> APIResponse:
+async def retry_task(
+    task_id: str,
+    user: CurrentUser = Depends(require_user),
+) -> APIResponse:
     """
     重试失败的任务.
 
@@ -396,38 +458,25 @@ async def retry_task(task_id: str) -> APIResponse:
                 detail=f"Only failed tasks can be retried (current status: {task.status})"
             )
 
-        # 创建新任务
-        new_task = await manager.create_task(
-            query=task.query,
-            domain_preset=task.domain_preset,
-            max_results=task.max_results
-        )
+        await _consume_one_task_quota(user)
 
-        # 触发后台任务执行 - 优先使用 Celery Worker
-        from src.worker.tasks import get_celery_app, run_task_pipeline_task, execute_task_pipeline_async
-        import asyncio
-
-        celery_app = get_celery_app()
-        if celery_app is not None:
-            # Celery 可用：发送到 Worker
-            run_task_pipeline_task.delay(
-                task_id=new_task.task_id,
+        try:
+            new_task = await manager.create_task(
                 query=task.query,
                 domain_preset=task.domain_preset,
-                max_results=task.max_results
+                max_results=task.max_results,
             )
-            logger.info(f"Retry task {new_task.task_id} dispatched to Celery worker")
-        else:
-            # Celery 不可用：在当前进程执行
-            asyncio.create_task(
-                execute_task_pipeline_async(
-                    task_id=new_task.task_id,
-                    query=task.query,
-                    domain_preset=task.domain_preset,
-                    max_results=task.max_results
-                )
-            )
-            logger.info(f"Retry task {new_task.task_id} started in-process (no Celery)")
+        except Exception:
+            if not settings.auth_disabled:
+                await supabase_backend.rpc_refund_task_quota(user.id)
+            raise
+
+        await _dispatch_task_execution(
+            new_task.task_id,
+            task.query,
+            task.domain_preset,
+            task.max_results,
+        )
 
         return APIResponse(
             code=200,

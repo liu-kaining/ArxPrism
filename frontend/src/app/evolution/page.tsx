@@ -19,6 +19,7 @@ interface EvolutionNode {
   id: string;
   name: string;
   generation: number;
+  core_architecture?: string;
 }
 
 function EvolutionPageContent() {
@@ -57,7 +58,9 @@ function EvolutionPageContent() {
       setLinks(data.links);
 
       if (data.nodes.length === 0) {
-        toast.error(`未找到方法 "${displayLabel || key}" 的进化树`);
+        toast.error(
+          `未找到「${displayLabel || key}」的进化树。请点上方同名标签，或从论文详情页「进化树」入口打开。`
+        );
       }
     } catch (err) {
       setError(String(err));
@@ -102,12 +105,15 @@ function EvolutionPageContent() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-stone-900">
-          技术进化树
+          架构演进与启发
         </h1>
         <p className="mt-1 text-sm text-stone-600">
-          以某一方法为中心，展示 Neo4j 中{" "}
-          <span className="font-mono text-amber-800">IMPROVES_UPON</span>{" "}
-          谱系。下图库无法把多棵互不连通的树「一次画在一张图」上，请从下方列表点选或搜索。
+          以某一方法为中心，沿{" "}
+          <span className="font-mono text-amber-800">EVOLVED_FROM</span>{" "}
+          梳理<strong className="font-medium text-stone-800">
+            技术架构的演进与启发
+          </strong>
+          （Architectural Evolution & Inspiration）：谁在思路上滋养了谁、关键创新如何传递。请从下方列表点选或搜索。
         </p>
       </div>
 
@@ -118,9 +124,10 @@ function EvolutionPageContent() {
             库里的方法（可点选）
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            「有谱系」表示至少有一条 IMPROVES_UPON；萃取里在{" "}
-            <code className="rounded bg-muted px-1">comparisons</code>{" "}
-            中给出基线后才会写入边。
+            「有谱系」表示该方法在 Neo4j 里至少有一条{" "}
+            <span className="font-mono text-amber-800">EVOLVED_FROM</span>{" "}
+            边。点标签会用图里存储的<strong>合并键</strong>查询，最稳；搜索框支持合并键或
+            LLM 写的<strong>展示名</strong>（与论文列表/详情里方法名一致即可）。
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -142,8 +149,10 @@ function EvolutionPageContent() {
                 {withEvolution.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     暂无。请先跑论文萃取流水线，且 LLM 需在{" "}
-                    <code className="rounded bg-muted px-1">comparisons</code>{" "}
-                    中写出基线对比，才会写入 IMPROVES_UPON。
+                    <code className="rounded bg-muted px-1">
+                      evolution_lineages
+                    </code>{" "}
+                    中写出技术传承，才会写入 EVOLVED_FROM。
                   </p>
                 ) : (
                   <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto pr-1">
@@ -169,7 +178,7 @@ function EvolutionPageContent() {
               </div>
               <div>
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  仅有方法节点（无 IMPROVES_UPON 边）
+                  仅有方法节点（无 EVOLVED_FROM 边）
                 </p>
                 {otherMethods.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
@@ -239,7 +248,7 @@ function EvolutionPageContent() {
         <Card className="border-border bg-card shadow-sm">
           <CardHeader>
             <CardTitle className="text-card-foreground">
-              {methodName} 的进化树 ({nodes.length} 个方法)
+              {methodName} 的架构演进图 ({nodes.length} 个方法)
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -267,12 +276,12 @@ function EvolutionPageContent() {
 
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
-                按代数分列：左侧为祖先，中间为目标方法，右侧为改进该方法的后继；可横向滚动宽图。
+                自上而下时间瀑布：上方为代数更小的祖先脉络，中间为目标方法，下方为其架构所启发的后继；可在画布区域滚动浏览。
               </p>
               <EvolutionGraphView
                 nodes={nodes}
                 links={links}
-                height={440}
+                height={520}
                 showMiniMap
               />
             </div>

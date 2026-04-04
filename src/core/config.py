@@ -50,8 +50,16 @@ class Settings(BaseSettings):
     # LLM 连接参数
     llm_api_key: str = ""
     llm_base_url: Optional[str] = None  # e.g. https://api.openai.com/v1 or any OpenAI-compatible endpoint
-    llm_model: str = "gpt-4o-mini"
-    llm_max_tokens: int = 4096
+    # 部分聚合网关（如带 Web CSRF 的中间层）对 /embeddings 与 /chat/completions 策略不一致；
+    # 若 chat 正常但 embeddings 报 invalid csrf，可单独指向直连 OpenAI 或其它兼容 embeddings 的 base（须含 /v1）
+    llm_embedding_base_url: Optional[str] = None
+    llm_embedding_api_key: str = ""  # 为空则复用 llm_api_key
+    llm_embedding_model: str = "text-embedding-3-small"
+    # Chat 多模型路由（OpenAI-compatible；Embeddings 仍仅用 llm_embedding_*，勿混用）
+    llm_triage_model: str = "sapiens-ai/agnes-1.5-lite"
+    llm_extractor_model: str = "anthropic/claude-sonnet-4.6"
+    llm_resolution_model: str = "openai/gpt-5.4-mini"
+    llm_max_tokens: int = 8192
     llm_temperature: float = 0.1
     llm_max_retries: int = 3
     llm_base_delay: float = 2.0
@@ -59,17 +67,20 @@ class Settings(BaseSettings):
     # arXiv 配置
     arxiv_rate_limit_delay: float = 3.0  # arXiv 君子协定: 3秒间隔
     arxiv_min_content_length: int = 500  # 最小内容长度阈值
+    # 单次任务从 arXiv API 最多遍历多少条候选（分页累加）；前若干篇已在库时会继续向后翻直到凑满 max_results 或触顶
+    arxiv_max_scan_per_task: int = 500
 
-    # PDF 存储配置（须对运行用户可写；/data/papers 在 Docker 非 root 用户下会 Permission denied）
+    # PDF 仅作抓取解析时的临时目录（解析后即删）；须对运行用户可写
     pdf_storage_path: str = "/tmp/arxprism-papers"
 
-    # Cloudflare R2 对象存储配置 (用于存储论文 PDF)
-    r2_enabled: bool = False  # 是否启用 R2 存储
-    r2_account_id: str = ""  # R2 Account ID
-    r2_access_key_id: str = ""  # R2 Access Key ID
-    r2_secret_access_key: str = ""  # R2 Secret Access Key
-    r2_bucket_name: str = "arxprism-papers"  # R2 Bucket 名称
-    r2_public_url: str = ""  # R2 公开访问 URL (如 https://xxx.r2.dev)
+    # Supabase（用户、JWT、profiles、system_settings）
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    supabase_service_role_key: str = ""
+    # JWT 签名密钥：Supabase Dashboard → Settings → API → JWT Secret
+    supabase_jwt_secret: str = ""
+    # 本地/内网调试可 true；生产务必 false
+    auth_disabled: bool = False
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

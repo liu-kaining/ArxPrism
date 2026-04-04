@@ -45,7 +45,10 @@ function evolutionDataSignature(
   height: number
 ) {
   const nodePart = nodes
-    .map((n) => `${n.id}\u0000${n.generation}\u0000${n.name}`)
+    .map(
+      (n) =>
+        `${n.id}\u0000${n.generation}\u0000${n.name}\u0000${n.core_architecture ?? ""}`
+    )
     .join("\u0001");
   const linkPart = links
     .map((l, i) => {
@@ -53,7 +56,9 @@ function evolutionDataSignature(
       const ds = (l.datasets ?? []).join("\u0004");
       const d1 = l.dataset ?? "";
       const mi = l.metrics_improvement ?? "";
-      return `${l.source}\u0000${l.target}\u0000${i}\u0000${l.relationshipType ?? ""}\u0000${m}\u0000${ds}\u0000${d1}\u0000${mi}`;
+      const r = l.reason ?? "";
+      const da = l.discovered_at ?? "";
+      return `${l.source}\u0000${l.target}\u0000${i}\u0000${l.relationshipType ?? ""}\u0000${m}\u0000${ds}\u0000${d1}\u0000${mi}\u0000${r}\u0000${da}`;
     })
     .join("\u0002");
   return `${height}\u0003${nodePart}\u0003${linkPart}`;
@@ -86,35 +91,48 @@ function EvolutionGraphInner({
   const layoutKey = dataSignature;
 
   const innerWidth = Math.max(layout.contentWidth, 640);
+  const innerHeight = Math.max(height, layout.contentHeight);
 
   return (
-    <div
-      className="overflow-x-auto"
-      style={{ width: "100%", height }}
-    >
-      <ReactFlow
-        nodes={rfNodes}
-        edges={rfEdges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={evolutionNodeTypes}
-        edgeTypes={evolutionEdgeTypes}
-        minZoom={0.1}
-        maxZoom={1.4}
-        proOptions={{ hideAttribution: true }}
-        className="bg-transparent"
-        style={{ width: innerWidth, height }}
+    <div className="relative" style={{ width: "100%", height }}>
+      <div className="overflow-auto" style={{ width: "100%", height }}>
+        <ReactFlow
+          nodes={rfNodes}
+          edges={rfEdges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={evolutionNodeTypes}
+          edgeTypes={evolutionEdgeTypes}
+          minZoom={0.1}
+          maxZoom={1.4}
+          proOptions={{ hideAttribution: true }}
+          className="bg-transparent"
+          style={{ width: innerWidth, height: innerHeight }}
+        >
+          <Background gap={16} size={1} />
+          <Controls showInteractive={false} position="bottom-right" />
+          {showMiniMap ? (
+            <MiniMap
+              className="!border-amber-200/90 !bg-white/95"
+              maskColor="rgba(245, 240, 232, 0.75)"
+            />
+          ) : null}
+          <FitView layoutKey={layoutKey} />
+        </ReactFlow>
+      </div>
+      <div
+        className="pointer-events-none absolute bottom-2 left-2 z-10 max-w-[min(92%,22rem)] rounded-md border border-stone-400/40 bg-stone-950/75 px-2.5 py-1.5 font-mono text-[10px] leading-snug text-stone-200 shadow-sm backdrop-blur-sm"
+        aria-hidden
       >
-        <Background gap={16} size={1} />
-        <Controls showInteractive={false} position="bottom-right" />
-        {showMiniMap ? (
-          <MiniMap
-            className="!border-amber-200/90 !bg-white/95"
-            maskColor="rgba(245, 240, 232, 0.75)"
-          />
-        ) : null}
-        <FitView layoutKey={layoutKey} />
-      </ReactFlow>
+        <div>
+          <span className="text-violet-300/90">EVOLVED_FROM</span>
+          <span className="text-stone-400"> · </span>
+          箭头方向：技术血脉传承与进化（子 → 祖）
+        </div>
+        <div className="mt-0.5 text-[9px] text-stone-500">
+          Arrows indicate technology lineage (child method → inspiring ancestor).
+        </div>
+      </div>
     </div>
   );
 }

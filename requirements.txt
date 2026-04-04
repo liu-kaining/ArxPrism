@@ -4,6 +4,7 @@
 # Web Framework
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9  # File/Form（如 admin import-graph）
 
 # Data Validation
 pydantic>=2.9.0
@@ -28,13 +29,13 @@ markdownify>=0.14.1
 # PDF Parsing (学术论文首选)
 PyMuPDF>=1.24.0
 
-# Cloudflare R2 Object Storage
-boto3>=1.34.0
-botocore>=1.34.0
-
 # Frontend
 streamlit>=1.40.0
 streamlit-agraph>=0.0.45
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Supabase (Auth profiles / settings; JWT 校验)
+supabase>=2.6.0
+python-jose[cryptography]>=3.3.0

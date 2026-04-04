@@ -30,7 +30,7 @@ from src.core.config import settings
 from src.database.neo4j_client import neo4j_client
 from src.models.task_models import get_domain_preset, DomainPreset
 from src.services.llm_extractor import get_llm_extractor
-from src.services.r2_storage import get_r2_storage
+from src.services.runtime_settings import get_runtime_pipeline_settings
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +41,6 @@ try:
 except ImportError:
     PYMUPDF_AVAILABLE = False
     logger.warning("PyMuPDF not installed, PDF parsing will be disabled")
-
-
-# =============================================================================
-# 防线3: 论文首尾截断算法常量
-# =============================================================================
-
-# 最大文本长度（字符数）
-MAX_TEXT_LENGTH = 15000
-# 头部保留长度
-HEAD_LENGTH = 7500
-# 尾部保留长度
-TAIL_LENGTH = 7500
-# 中间省略标记
-MIDDLE_OMISSION = "\n\n...[MIDDLE OMITTED FOR CONTEXT OPTIMIZATION]...\n\n"
 
 
 # =============================================================================
@@ -138,7 +124,7 @@ class PaperContent:
     published_date: str
     text_content: str
     html_url: str
-    pdf_path: Optional[str] = None  # 本地 PDF 路径
+    pdf_path: Optional[str] = None  # 预留；当前未使用
     source: str = "unknown"  # 内容来源: "pdf", "html", "summary"
     summary: str = ""  # arXiv API 摘要，用于向量拼接与入库
 
@@ -149,17 +135,20 @@ class ArxivFetchStats:
 
     original_query: str
     optimized_query: str
+    # 本轮从 arXiv 实际遍历的候选篇数（含已在库/分诊跳过/抓取失败）
     search_hits: int
     accepted: int
+    # 本轮使用的扫描上限（与 settings.arxiv_max_scan_per_task 相关）
+    scan_cap: int
 
 
 class ArxivRadar:
     """arXiv 论文雷达服务 (异步实现).
 
-    内容获取优先级:
-    1. PDF 下载 + PyMuPDF 解析 (最佳质量)
-    2. HTML 页面解析 (中等质量)
-    3. arXiv summary 兜底 (最低质量)
+    内容获取优先级（与 `_fetch_paper_content` 一致；HTML 可由运行时关闭）:
+    1. HTML（Markdownify）
+    2. PDF（PyMuPDF）
+    3. Summary（API 兜底）
     """
 
     def __init__(self) -> None:
@@ -211,19 +200,23 @@ class ArxivRadar:
             max_results,
         )
 
-        papers = self._search_papers(optimized_query, max_results)
-        search_hits = len(papers)
-        if not papers:
-            logger.warning("No papers from arXiv search for query: %s", optimized_query)
-            return [], ArxivFetchStats(
-                original_query=query,
-                optimized_query=optimized_query,
-                search_hits=0,
-                accepted=0,
-            )
+        # 扫描上限：在「已在库」密集时向后分页，直到凑满 max_results 篇可入库或触顶
+        scan_cap = min(
+            settings.arxiv_max_scan_per_task,
+            max(100, max_results * 25),
+        )
+        logger.info(
+            "arXiv scan: want_up_to=%s candidates_cap=%s (pagination until enough new or cap)",
+            max_results,
+            scan_cap,
+        )
 
         results: list[PaperContent] = []
-        for paper in papers:
+        examined = 0
+        for paper in self._iter_search_results(optimized_query, scan_cap):
+            examined += 1
+            if len(results) >= max_results:
+                break
             try:
                 content = await self._fetch_paper_with_dedup(paper)
                 if content is not None:
@@ -236,53 +229,64 @@ class ArxivRadar:
                 )
                 continue
 
+        if examined == 0:
+            logger.warning("No papers from arXiv search for query: %s", optimized_query)
+            return [], ArxivFetchStats(
+                original_query=query,
+                optimized_query=optimized_query,
+                search_hits=0,
+                accepted=0,
+                scan_cap=scan_cap,
+            )
+
+        if len(results) < max_results and examined >= scan_cap:
+            logger.warning(
+                "arXiv scan stopped at cap %s: got %s new papers, task asked up to %s",
+                scan_cap,
+                len(results),
+                max_results,
+            )
+
         logger.info(
-            "Fetched %s new papers out of %s search hits (original=%r)",
+            "Fetched %s new papers out of %s candidates examined (cap=%s, original=%r)",
             len(results),
-            search_hits,
+            examined,
+            scan_cap,
             query,
         )
         stats = ArxivFetchStats(
             original_query=query,
             optimized_query=optimized_query,
-            search_hits=search_hits,
+            search_hits=examined,
             accepted=len(results),
+            scan_cap=scan_cap,
         )
         return results, stats
 
-    def _search_papers(
+    def _iter_search_results(
         self,
         query: str,
-        max_results: int
-    ) -> list[arxiv.Result]:
+        scan_limit: int,
+    ):
         """
-        搜索 arXiv 论文.
+        流式遍历 arXiv 搜索结果（底层 API 分页由 arxiv.Client 处理）。
 
         Args:
-            query: arXiv 搜索查询 (已优化的)
-            max_results: 最大结果数
-
-        Returns:
-            List of arxiv.Result
+            query: 已优化的搜索串
+            scan_limit: 最多产出多少条 Result（总窗口上限）
         """
-        logger.info(f"Searching arXiv with optimized query: '{query}'")
-
+        logger.info("Searching arXiv with optimized query: %r (scan_limit=%s)", query, scan_limit)
         try:
             client = arxiv.Client()
             search = arxiv.Search(
                 query=query,
-                max_results=max_results,
+                max_results=scan_limit,
                 sort_by=arxiv.SortCriterion.SubmittedDate,
-                sort_order=arxiv.SortOrder.Descending
+                sort_order=arxiv.SortOrder.Descending,
             )
-
-            results = list(client.results(search))
-            logger.info(f"Found {len(results)} papers from arXiv")
-            return results
-
+            yield from client.results(search)
         except Exception as e:
-            logger.error(f"arXiv search failed: {e}")
-            return []
+            logger.error("arXiv search failed: %s", e)
 
     async def _fetch_paper_with_dedup(
         self,
@@ -316,7 +320,12 @@ class ArxivRadar:
         # Step 2b: LLM 分诊（标题+摘要），不相关则绝不下载 PDF/HTML 全文
         abstract = getattr(paper, "summary", "") or ""
         try:
-            is_relevant = await get_llm_extractor().triage_paper(paper.title, abstract)
+            rs = await get_runtime_pipeline_settings()
+            is_relevant = await get_llm_extractor().triage_paper(
+                paper.title,
+                abstract,
+                relevance_threshold=rs.triage_threshold,
+            )
         except Exception as e:
             logger.warning(f"Triage raised for {arxiv_id}, fail-open: {e}")
             is_relevant = True
@@ -348,10 +357,20 @@ class ArxivRadar:
         entry_url = getattr(paper, "entry_id", f"https://arxiv.org/abs/{arxiv_id}")
         abstract = (getattr(paper, "summary", "") or "").strip()
 
+        runtime = await get_runtime_pipeline_settings()
+
         # ===== 优先级 1: HTML 解析（HTML-First，减轻 PDF 双栏错位幻觉）=====
-        text_content = await self._try_fetch_from_html(arxiv_id, html_url)
+        text_content: Optional[str] = None
+        if runtime.html_first_enabled:
+            text_content = await self._try_fetch_from_html(arxiv_id, html_url)
+        else:
+            logger.info(
+                "Paper %s: html_first disabled via system_settings, skip HTML path",
+                arxiv_id,
+            )
+        if text_content:
+            text_content = self._compress_markdown(text_content)
         if text_content and len(text_content) >= self.min_content_length:
-            text_content = self._truncate_text(text_content)
             logger.info(
                 f"Paper {arxiv_id}: HTML-First — extracted from HTML ({len(text_content)} chars)"
             )
@@ -376,9 +395,10 @@ class ArxivRadar:
 
         # ===== 优先级 2: PDF 解析（兜底）=====
         if PYMUPDF_AVAILABLE:
-            text_content, local_pdf_path, public_pdf_url = await self._try_fetch_from_pdf(arxiv_id)
+            text_content = await self._try_fetch_from_pdf(arxiv_id)
+            if text_content:
+                text_content = self._compress_markdown(text_content)
             if text_content and len(text_content) >= self.min_content_length:
-                text_content = self._truncate_text(text_content)
                 logger.info(
                     f"Paper {arxiv_id}: PDF fallback — extracted ({len(text_content)} chars)"
                 )
@@ -393,7 +413,7 @@ class ArxivRadar:
                     ),
                     text_content=text_content,
                     html_url=html_url,
-                    pdf_path=public_pdf_url,
+                    pdf_path=None,
                     source="pdf",
                     summary=abstract,
                 )
@@ -401,8 +421,9 @@ class ArxivRadar:
 
         # ===== 优先级 3: arXiv Summary 兜底 =====
         text_content = abstract
+        if text_content:
+            text_content = self._compress_markdown(text_content)
         if text_content and len(text_content) >= self.min_content_length:
-            text_content = self._truncate_text(text_content)
             logger.info(
                 f"Paper {arxiv_id}: Summary fallback (priority 3) ({len(text_content)} chars)"
             )
@@ -425,20 +446,12 @@ class ArxivRadar:
         logger.error(f"Paper {arxiv_id}: All content extraction methods failed")
         return None
 
-    async def _try_fetch_from_pdf(
-        self,
-        arxiv_id: str
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    async def _try_fetch_from_pdf(self, arxiv_id: str) -> Optional[str]:
         """
-        尝试从 PDF 提取文本内容.
-
-        Args:
-            arxiv_id: arXiv 论文 ID
+        从 arXiv 下载 PDF 到临时目录、抽取正文后删除临时文件。
 
         Returns:
-            (text_content, local_pdf_path, public_pdf_url) 或 (None, None, None)
-            - local_pdf_path: 本地 PDF 路径
-            - public_pdf_url: R2 公开访问 URL (如果 R2 未启用则为 None)
+            抽取的正文；失败返回 None。
         """
         pdf_storage_path = Path(settings.pdf_storage_path)
         pdf_storage_path.mkdir(parents=True, exist_ok=True)
@@ -447,42 +460,41 @@ class ArxivRadar:
         pdf_local_path = pdf_storage_path / f"{arxiv_id}.pdf"
 
         try:
-            # 下载 PDF
-            logger.info(f"Downloading PDF: {pdf_url}")
+            logger.info(f"Downloading PDF (temp): {pdf_url}")
             async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
                 response = await client.get(pdf_url)
                 response.raise_for_status()
 
-                # 写入本地文件
                 with open(pdf_local_path, "wb") as f:
                     f.write(response.content)
 
                 file_size = len(response.content)
-                logger.info(f"PDF downloaded: {pdf_local_path} ({file_size} bytes)")
+                logger.info(
+                    "PDF saved temporarily for extraction: %s (%s bytes)",
+                    pdf_local_path,
+                    file_size,
+                )
 
-            # 解析 PDF (使用 to_thread 避免阻塞事件循环)
-            text_content = await asyncio.to_thread(self._extract_text_from_pdf, str(pdf_local_path))
-            if text_content:
-                # 上传到 R2 (如果启用)
-                r2_storage = get_r2_storage()
-                public_url = r2_storage.upload_pdf(str(pdf_local_path), arxiv_id)
-                if public_url:
-                    logger.info(f"PDF uploaded to R2: {public_url}")
-                    return text_content, str(pdf_local_path), public_url
-                else:
-                    # R2 未启用，返回本地路径作为 public_url
-                    return text_content, str(pdf_local_path), str(pdf_local_path)
-            else:
-                # 解析失败，删除文件
-                pdf_local_path.unlink(missing_ok=True)
-                return None, None, None
+            text_content = await asyncio.to_thread(
+                self._extract_text_from_pdf, str(pdf_local_path)
+            )
+            if not text_content:
+                return None
+
+            return text_content
 
         except Exception as e:
             logger.error(f"Failed to download/parse PDF for {arxiv_id}: {e}")
-            # 清理不完整的文件
+            return None
+        finally:
             if pdf_local_path.exists():
-                pdf_local_path.unlink(missing_ok=True)
-            return None, None, None
+                try:
+                    pdf_local_path.unlink()
+                    logger.debug("Removed temp PDF: %s", pdf_local_path)
+                except OSError as oe:
+                    logger.warning(
+                        "Could not remove temp PDF %s: %s", pdf_local_path, oe
+                    )
 
     def _extract_text_from_pdf(self, pdf_path: str) -> Optional[str]:
         """
@@ -612,43 +624,40 @@ class ArxivRadar:
             return date.strftime("%Y-%m-%d")
         return str(date)[:10]
 
-    def _truncate_text(self, text: str) -> str:
+    def _compress_markdown(self, text: str) -> str:
         """
-        论文首尾截断算法 (Lost in the Middle / Cost Saving).
+        Markdown 智能压缩：去除无意义的超长噪声（Base64/十六进制/长分隔线/连空行）。
 
-        防线3实现:
-        - 如果文本长度超过 MAX_TEXT_LENGTH (15000字符)
-        - 保留前 HEAD_LENGTH (7500字符) - 涵盖 Abstract 和 Introduction
-        - 保留后 TAIL_LENGTH (7500字符) - 涵盖 Experiments 和 Conclusion
-        - 中间部分替换为省略标记
-
-        Args:
-            text: 原始论文文本
-
-        Returns:
-            截断后的文本
+        注意：这不是「语义摘要」，只做极宽容的噪声清理，尽量不破坏正文内容。
         """
-        # 切除 References / Bibliography 之后的内容，避免尾部截断全是参考文献诱发 baseline 幻觉
-        ref_boundary = re.search(
-            r"\n(?:\d+\.\s*)?(?:References|Bibliography)\s*\n",
-            text,
-            re.IGNORECASE,
-        )
-        if ref_boundary:
-            text = text[: ref_boundary.start()]
+        if not text:
+            return ""
 
-        if len(text) <= MAX_TEXT_LENGTH:
-            return text
+        out = text
 
-        head = text[:HEAD_LENGTH]
-        tail = text[-TAIL_LENGTH:]
-
-        logger.info(
-            f"Truncating text: {len(text)} -> {HEAD_LENGTH + len(MIDDLE_OMISSION) + TAIL_LENGTH} chars "
-            f"(head={HEAD_LENGTH}, tail={TAIL_LENGTH})"
+        # 1) 移除 data:image/...;base64,... 这类内嵌图片数据（极长、极耗 token）
+        out = re.sub(
+            r"data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]{100,}",
+            "",
+            out,
+            flags=re.IGNORECASE,
         )
 
-        return head + MIDDLE_OMISSION + tail
+        # 2) 移除连续超长的字母数字块（常见于 Base64/hex/压缩流残片）
+        out = re.sub(r"[A-Za-z0-9+/=]{150,}", "", out)
+
+        # 3) 过长分隔线归一化
+        out = re.sub(r"_{20,}", "---", out)
+        out = re.sub(r"-{20,}", "---", out)
+
+        # 4) 连续空行压缩（3 个以上换行 -> 2 个）
+        out = re.sub(r"\n{3,}", "\n\n", out)
+
+        # 5) 极端长度兜底（约 7-8 万 token；极罕见）
+        if len(out) > 300_000:
+            out = out[:300_000] + "\n\n...[TEXT TRUNCATED DUE TO EXTREME LENGTH]..."
+
+        return out
 
     def preview_arxiv_search(
         self,
@@ -665,7 +674,7 @@ class ArxivRadar:
             return "", []
         cap = max(1, min(int(limit), 25))
         optimized = build_optimized_query(q, domain_preset)
-        raw = self._search_papers(optimized, cap)
+        raw = list(self._iter_search_results(optimized, cap))
         papers: list[dict[str, Any]] = []
         for r in raw:
             entry = getattr(r, "entry_id", "") or ""

@@ -24,7 +24,7 @@ import {
   FileText,
   Brain,
 } from "lucide-react";
-import { cn, formatDate } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import toast from "react-hot-toast";
 import { PaperGraphView } from "@/components/graph/PaperGraphView";
 import { EMPTY_GRAPH_RELATIONSHIPS } from "@/lib/graph/paperGraphFlow";
@@ -45,7 +45,7 @@ interface GraphData {
 }
 
 const shell =
-  "rounded-2xl border border-stone-200/90 bg-white/95 text-stone-800 shadow-sm";
+  "rounded-2xl border border-stone-200/90 bg-white text-stone-800 shadow-sm";
 
 export default function PaperDetailPage() {
   const params = useParams();
@@ -325,39 +325,90 @@ export default function PaperDetailPage() {
                   </span>
                   arXiv 摘要
                 </CardTitle>
+                <p className="text-xs text-stone-500">
+                  左侧为 arXiv
+                  原文；右侧为入库时由大模型生成的专业中译，建议与 PDF
+                  对照核验。译文力求术语准确、信息完整，仍以原文为准。
+                </p>
               </CardHeader>
               <CardContent className="pt-0">
-                <p className="text-sm leading-relaxed text-stone-600 whitespace-pre-wrap">
-                  {paper.summary.trim()}
-                </p>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
+                  <div className="rounded-xl border border-stone-200/90 bg-stone-50/60 p-3.5">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                        原文
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 shrink-0 px-2 text-xs text-stone-600"
+                        onClick={() =>
+                          copyText(paper.summary!.trim(), "英文摘要")
+                        }
+                      >
+                        <Copy className="mr-1 h-3 w-3" />
+                        复制
+                      </Button>
+                    </div>
+                    <p className="text-sm leading-relaxed text-stone-700 whitespace-pre-wrap">
+                      {paper.summary.trim()}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-3.5">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-amber-900/80">
+                        专业译文
+                      </span>
+                      {paper.summary_zh?.trim() ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 shrink-0 px-2 text-xs text-amber-900/80"
+                          onClick={() =>
+                            copyText(paper.summary_zh!.trim(), "中文摘要")
+                          }
+                        >
+                          <Copy className="mr-1 h-3 w-3" />
+                          复制
+                        </Button>
+                      ) : null}
+                    </div>
+                    {paper.summary_zh?.trim() ? (
+                      <p className="text-sm leading-relaxed text-stone-800 whitespace-pre-wrap">
+                        {paper.summary_zh.trim()}
+                      </p>
+                    ) : (
+                      <p className="text-sm leading-relaxed text-stone-500 italic">
+                        暂无译文。若本篇在翻译功能上线前已入库，请对相应主题重新发起一次抓取与处理以生成中译。
+                      </p>
+                    )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           ) : null}
 
           {paper.reasoning_process?.trim() ? (
-            <div
-              className={cn(
-                shell,
-                "border-stone-700/25 bg-stone-900/[0.45] text-stone-100 shadow-md backdrop-blur-md"
-              )}
-            >
-              <div className="border-b border-white/10 px-5 py-3">
-                <h3 className="flex items-center gap-2 text-sm font-semibold tracking-tight text-stone-50">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/20 text-violet-200 ring-1 ring-violet-400/30">
+            <Card className={shell}>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 text-violet-900">
                     <Brain className="h-4 w-4" />
                   </span>
                   AI Reading Notes / 萃取推理过程
-                </h3>
-                <p className="mt-1 pl-11 text-[11px] text-stone-400">
+                </CardTitle>
+                <p className="text-xs text-stone-600">
                   模型在阅读全文时的思维链摘要，便于对照 PDF 核验
                 </p>
-              </div>
-              <div className="border-l-4 border-violet-500/90 px-5 py-4 pl-6">
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-stone-200/95">
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-stone-800">
                   {paper.reasoning_process.trim()}
                 </p>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           ) : null}
 
           {paper.core_problem ? (
@@ -389,7 +440,9 @@ export default function PaperDetailPage() {
                     提出的方法
                   </CardTitle>
                   <Link
-                    href={`/evolution?method=${encodeURIComponent(paper.proposed_method)}`}
+                    href={`/evolution?method=${encodeURIComponent(
+                      paper.proposed_method_name_key || paper.proposed_method
+                    )}`}
                   >
                     <Button
                       variant="outline"

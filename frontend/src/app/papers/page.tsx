@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { paperApi, Paper, type LibraryStats } from "@/lib/api/client";
@@ -19,6 +19,8 @@ import {
   Link2,
   Layers,
   Network,
+  Type,
+  Loader2,
 } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 
@@ -32,9 +34,11 @@ function paperTaskLabel(paper: Paper): string | null {
 function TopicDistributionCard({
   stats,
   onPickTopic,
+  isRefreshing,
 }: {
   stats: LibraryStats;
   onPickTopic: () => void;
+  isRefreshing?: boolean;
 }) {
   const scope = stats.by_topic_scope ?? "global";
   const maxCount = stats.by_topic[0]?.paper_count ?? 0;
@@ -44,7 +48,18 @@ function TopicDistributionCard({
     stats.by_topic.every((r) => r.paper_count === 1);
 
   return (
-    <Card className="overflow-hidden border-border bg-card shadow-sm">
+    <Card
+      className={cn(
+        "relative overflow-hidden border-border bg-card shadow-sm transition-opacity",
+        isRefreshing && "opacity-70"
+      )}
+    >
+      {isRefreshing ? (
+        <div className="absolute right-3 top-3 z-[2] flex items-center gap-1.5 rounded-full border border-amber-200/90 bg-amber-50/95 px-2.5 py-1 text-[11px] font-semibold text-amber-950 shadow-sm">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          更新中
+        </div>
+      ) : null}
       <CardHeader className="space-y-2 border-b border-border/70 bg-gradient-to-r from-stone-50/90 to-amber-50/40 pb-3 pt-4">
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle className="text-base font-semibold text-stone-900">
@@ -186,11 +201,17 @@ function PapersPageInner() {
 
   const [query, setQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"semantic" | "keyword">(
+    "semantic"
+  );
   const [papers, setPapers] = useState<Paper[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [stats, setStats] = useState<LibraryStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  /** 用于在重新搜索时保留上一屏列表，避免整块骨架「白屏」感 */
+  const wasListedRef = useRef(false);
   const pageSize = 10;
 
   useEffect(() => {
@@ -203,10 +224,12 @@ function PapersPageInner() {
           taskTopic: taskTopic || undefined,
           limit: pageSize,
           offset: page * pageSize,
+          searchMode,
         });
         if (!cancelled) {
           setPapers(result.papers);
           setTotal(result.total);
+          if (result.papers.length > 0) wasListedRef.current = true;
         }
       } catch (error) {
         console.error("Search failed:", error);
@@ -217,23 +240,28 @@ function PapersPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [appliedQuery, page, taskTopic]);
+  }, [appliedQuery, page, taskTopic, searchMode]);
 
   useEffect(() => {
     let cancelled = false;
+    setStatsLoading(true);
     paperApi
       .getLibraryStats({
         query: appliedQuery,
         taskTopic: taskTopic || undefined,
+        searchMode,
       })
       .then((s) => {
         if (!cancelled) setStats(s);
       })
-      .catch((e) => console.error("Library stats failed:", e));
+      .catch((e) => console.error("Library stats failed:", e))
+      .finally(() => {
+        if (!cancelled) setStatsLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [appliedQuery, taskTopic]);
+  }, [appliedQuery, taskTopic, searchMode]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -258,7 +286,10 @@ function PapersPageInner() {
             论文列表
           </h1>
           <p className="mt-1 text-sm text-stone-600">
-            向量语义检索 + 主题筛选；打开详情可查看 CoT 推理与立体实验对比
+            {searchMode === "semantic"
+              ? "语义模式：向量相似度 + 与本轮最佳结果挂钩的相对阈值，减少「搜一个词却列出整库」。"
+              : "关键词模式：标题 / 核心问题 / 方法名包含查询子串即命中。"}
+            支持主题筛选；详情页可查看 CoT 与实验对比。
           </p>
         </div>
       </div>
@@ -273,35 +304,77 @@ function PapersPageInner() {
                 placeholder='Ask anything (e.g., "How to locate microservice root causes without tracing?")… 留空则按时间浏览全库'
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="h-12 rounded-xl pl-12 pr-[8.25rem] shadow-inner"
+                className="h-12 rounded-xl pl-12 pr-[9.5rem] shadow-inner sm:pr-[10.5rem]"
               />
               <div
-                className="pointer-events-none absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-lg border border-violet-400/40 bg-gradient-to-r from-violet-950/[0.07] to-cyan-950/[0.06] px-2 py-1 shadow-sm ring-1 ring-violet-500/10"
-                title="向量语义检索：由嵌入模型理解意图，而非简单字符串匹配"
+                className="absolute right-2 top-1/2 flex -translate-y-1/2 gap-0.5 rounded-lg border border-stone-200/90 bg-white/95 p-0.5 shadow-sm"
+                role="group"
+                aria-label="检索模式"
               >
-                <Sparkles className="h-3.5 w-3.5 shrink-0 text-violet-500 drop-shadow-[0_0_6px_rgba(139,92,246,0.55)]" />
-                <span className="hidden text-[10px] font-bold uppercase tracking-wider text-violet-800/90 sm:inline">
-                  Semantic
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setSearchMode("semantic")}
+                  title="语义：向量相似度，弱相关条目会被相对阈值过滤"
+                  className={cn(
+                    "flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors",
+                    searchMode === "semantic"
+                      ? "bg-violet-100 text-violet-900 ring-1 ring-violet-300/80"
+                      : "text-stone-500 hover:bg-stone-100 hover:text-stone-800"
+                  )}
+                >
+                  <Sparkles className="h-3.5 w-3.5 shrink-0 text-violet-600" />
+                  <span className="hidden sm:inline">语义</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSearchMode("keyword")}
+                  title="关键词：标题、核心问题、方法名包含子串"
+                  className={cn(
+                    "flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors",
+                    searchMode === "keyword"
+                      ? "bg-amber-100 text-amber-950 ring-1 ring-amber-300/80"
+                      : "text-stone-500 hover:bg-stone-100 hover:text-stone-800"
+                  )}
+                >
+                  <Type className="h-3.5 w-3.5 shrink-0 text-amber-800" />
+                  <span className="hidden sm:inline">关键词</span>
+                </button>
               </div>
             </div>
-            <Button type="submit" disabled={isLoading} className="h-12 rounded-xl px-6">
+            <Button type="submit" disabled={isLoading} className="h-12 min-w-[7.5rem] rounded-xl px-6">
               {isLoading ? (
-                <span className="animate-pulse">搜索中...</span>
+                <>
+                  <Loader2
+                    className="mr-2 h-4 w-4 shrink-0 animate-spin"
+                    aria-hidden
+                  />
+                  搜索中…
+                </>
               ) : (
                 <>
-                  <Search className="w-4 h-4 mr-2" />
+                  <Search className="mr-2 h-4 w-4" />
                   搜索
                 </>
               )}
             </Button>
           </form>
+          {searchMode === "semantic" ? (
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+              语义检索需要后端调用<strong>嵌入模型</strong>并查询 Neo4j
+              向量索引，冷启动或网络较慢时可能需数秒；若只要字面匹配可切换「关键词」。
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
       {/* 图库统计（全库，与当前搜索关键词无关） */}
       {stats ? (
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div
+          className={cn(
+            "relative grid gap-3 md:grid-cols-2 lg:grid-cols-4 transition-opacity",
+            statsLoading && "opacity-65"
+          )}
+        >
           {[
             {
               label: "入库论文",
@@ -348,6 +421,14 @@ function PapersPageInner() {
               </CardContent>
             </Card>
           ))}
+          {statsLoading ? (
+            <div className="pointer-events-none absolute inset-0 flex items-start justify-end pt-2 pr-2 md:pt-3 md:pr-3">
+              <span className="flex items-center gap-1.5 rounded-full border border-amber-200/90 bg-amber-50/95 px-2.5 py-1 text-[11px] font-semibold text-amber-950 shadow-sm">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                统计同步中
+              </span>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -355,22 +436,83 @@ function PapersPageInner() {
         <TopicDistributionCard
           stats={stats}
           onPickTopic={() => setPage(0)}
+          isRefreshing={statsLoading}
         />
       ) : null}
 
-      {/* Results */}
-      {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 stagger-children md:grid-cols-2">
-          {[1, 2, 3, 4].map((i) => (
-            <Skeleton
-              key={i}
-              className="h-48 w-full rounded-xl border border-border bg-muted"
-            />
-          ))}
+      {/* Results：有上一屏数据时保留展示并叠加载提示，避免「整块白屏」 */}
+      {isLoading && papers.length === 0 && !wasListedRef.current ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 rounded-xl border border-stone-200 bg-stone-50/80 px-4 py-3 text-sm text-stone-700">
+            <Loader2 className="h-5 w-5 shrink-0 animate-spin text-amber-700" />
+            <span>
+              正在加载列表
+              {searchMode === "semantic"
+                ? "（语义模式会稍慢，请稍候）"
+                : "…"}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-4 stagger-children md:grid-cols-2">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton
+                key={i}
+                className="h-48 w-full rounded-xl border border-border bg-muted"
+              />
+            ))}
+          </div>
         </div>
-      ) : papers.length > 0 ? (
+      ) : null}
+
+      {isLoading && papers.length === 0 && wasListedRef.current ? (
+        <div
+          className="flex items-start gap-3 rounded-xl border border-violet-200/90 bg-violet-50/90 px-4 py-4 text-sm text-stone-800"
+          role="status"
+          aria-live="polite"
+        >
+          <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-violet-600" />
+          <div>
+            <p className="font-semibold text-stone-900">正在检索…</p>
+            <p className="mt-1 text-xs text-stone-600">
+              上一批结果已清空，新列表加载中
+              {searchMode === "semantic"
+                ? "（语义模式需调用嵌入服务，请稍候）"
+                : ""}
+              。
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {isLoading && papers.length > 0 ? (
+        <div
+          className="flex items-start gap-3 rounded-xl border border-violet-200/90 bg-gradient-to-r from-violet-50/95 to-amber-50/80 px-4 py-3 text-sm text-stone-800 shadow-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <Loader2
+            className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-violet-600"
+            aria-hidden
+          />
+          <div className="min-w-0 space-y-1">
+            <p className="font-semibold text-stone-900">正在更新检索结果…</p>
+            <p className="text-xs leading-relaxed text-stone-600">
+              {searchMode === "semantic"
+                ? "下方暂为上一批结果。语义检索需生成查询向量并访问向量索引，通常几秒完成。"
+                : "下方暂为上一批结果，新列表马上替换。"}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {!isLoading || papers.length > 0 ? (
+        papers.length > 0 ? (
         <>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-muted-foreground">
+          <div
+            className={cn(
+              "flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-muted-foreground transition-opacity",
+              isLoading && papers.length > 0 && "opacity-60"
+            )}
+          >
             <Sparkles className="h-4 w-4 shrink-0 text-amber-600" />
             <span>
               本次结果{" "}
@@ -398,7 +540,13 @@ function PapersPageInner() {
             ) : null}
           </div>
 
-          <div className="grid grid-cols-1 gap-4 stagger-children md:grid-cols-2">
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-4 stagger-children md:grid-cols-2 transition-opacity",
+              isLoading && papers.length > 0 && "pointer-events-none opacity-55"
+            )}
+            aria-busy={isLoading && papers.length > 0}
+          >
             {papers.map((paper) => {
               const task = paperTaskLabel(paper);
               return (
@@ -540,7 +688,7 @@ function PapersPageInner() {
             </div>
           ) : null}
         </>
-      ) : (
+        ) : !isLoading ? (
         <Card className="border-border bg-card shadow-sm">
           <CardContent className="py-16 text-center">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-border bg-muted">
@@ -554,7 +702,8 @@ function PapersPageInner() {
             </p>
           </CardContent>
         </Card>
-      )}
+        ) : null
+      ) : null}
     </div>
   );
 }

@@ -221,12 +221,24 @@ async def _process_paper_async(
 
         ed = extraction.extraction_data
         sum_txt = (paper_content.get("summary") or "").strip()
+        summary_zh = ""
+        if sum_txt:
+            logger.info(f"Paper {paper_id}: Translating abstract to zh-CN...")
+            tr = await llm_extractor.translate_arxiv_abstract_to_zh(
+                abstract_en=sum_txt,
+                paper_title=extraction.title or "",
+            )
+            summary_zh = (tr or "").strip()
+            if not summary_zh:
+                logger.warning(
+                    f"Paper {paper_id}: Abstract translation missing; summary_zh left empty"
+                )
         embed_parts = [extraction.title or "", ed.core_problem or ""]
         if sum_txt:
             embed_parts.append(sum_txt)
         embed_text = "\n\n".join(p for p in embed_parts if p)
         vec = await llm_extractor.generate_embedding(embed_text)
-        upd: dict = {"summary": sum_txt}
+        upd: dict = {"summary": sum_txt, "summary_zh": summary_zh}
         if vec and len(vec) == 1536:
             upd["embedding"] = vec
         extraction = extraction.model_copy(update=upd)
@@ -293,11 +305,23 @@ async def _execute_task_pipeline(
                     "或 API 暂无结果。可换关键词、改用「自定义」预设，或稍后再试。"
                 )
             else:
+                cap_note = ""
+                if fetch_stats.search_hits >= fetch_stats.scan_cap:
+                    cap_note = (
+                        f" 已达单次扫描上限 {fetch_stats.scan_cap}，"
+                        "可在环境变量 ARXIV_MAX_SCAN_PER_TASK 中调大后重试。"
+                    )
                 summary = (
-                    f"arXiv 命中 {fetch_stats.search_hits} 篇，但去重（已在库）、"
-                    f"领域分诊或全文抓取后没有可入库的新篇。详见运行 Worker/API 的日志（skipping / triage）。"
+                    f"已从 arXiv 按时间向后扫描 {fetch_stats.search_hits} 篇候选（本轮上限 "
+                    f"{fetch_stats.scan_cap}），均未产生可入库新篇（可能已在库、分诊未过或全文过短）。"
+                    f"{cap_note} 详见 Worker 日志（skipping / triage）。"
                 )
-            logger.warning("Task %s: no papers to process (hits=%s)", task_id, fetch_stats.search_hits)
+            logger.warning(
+                "Task %s: no papers to process (examined=%s cap=%s)",
+                task_id,
+                fetch_stats.search_hits,
+                fetch_stats.scan_cap,
+            )
             await task_manager.complete_task(task_id, completion_summary=summary)
             return
 

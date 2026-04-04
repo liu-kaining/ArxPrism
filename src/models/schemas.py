@@ -16,13 +16,21 @@ from typing import List, Optional
 class ProposedMethod(BaseModel):
     """论文提出的方法/架构."""
 
-    name: str = Field(
-        default="NOT_MENTIONED",
-        description="论文提出的新方法/架构名称（首选缩写，如 STRATUS）"
+    name: str = Field(description="提出的核心方法或系统名称")
+    description: str = Field(description="该方法的一句话核心介绍")
+    core_architecture: str = Field(default="NOT_MENTIONED", description="核心技术架构或机制（如 Transformer, 动态阈值, RLHF）")
+    key_innovations: List[str] = Field(default_factory=list, description="该方法的核心技术创新点列表")
+    limitations: List[str] = Field(default_factory=list, description="论文中承认的该方法的局限性或缺陷")
+
+
+class EvolutionLineage(BaseModel):
+    """技术血脉：提出的方法建立在哪些既有工作之上、受谁启发或扩展了谁。"""
+
+    ancestor_method: str = Field(
+        description="被继承、扩展或受其启发的祖先方法名称（如 'ResNet', 'Transformer', 'DeepLog'）"
     )
-    description: str = Field(
-        default="NOT_MENTIONED",
-        description="该方法的核心机制一句话描述（50-100字）"
+    evolution_reason: str = Field(
+        description="具体的演进原因或继承特性（如 '引入了其多头注意力机制', '改进了其在长文本下的显存瓶颈'）"
     )
 
 
@@ -44,24 +52,15 @@ class ExperimentComparison(BaseModel):
 
 
 class KnowledgeGraphNodes(BaseModel):
-    """知识图谱写入用的结构化实验对比（由 comparisons 展开为 Dataset / Method / IMPROVES_UPON）。"""
+    """知识图谱：技术血脉（EVOLVED_FROM）与实验对比（IMPROVES_UPON 等）。"""
 
+    evolution_lineages: List[EvolutionLineage] = Field(
+        default_factory=list,
+        description="技术血脉传承。记录提出的方法是建立在哪些现有技术基础之上、受谁启发，或者直接扩展了谁。",
+    )
     comparisons: List[ExperimentComparison] = Field(
         default_factory=list,
         description="具体的对比实验结果列表。记录在什么数据集上相对什么基线、指标如何变化。",
-    )
-
-
-class CriticalAnalysis(BaseModel):
-    """关键分析，包括创新点和局限性."""
-
-    key_innovations: List[str] = Field(
-        default_factory=list,
-        description="1-2条核心创新点（理论/架构层面）"
-    )
-    limitations: List[str] = Field(
-        default_factory=list,
-        description="1-2条局限性（作者承认的缺陷或专家视角的工程落地风险）"
     )
 
 
@@ -72,6 +71,12 @@ class TriageResponse(BaseModel):
         description="是否属于计算机系统/SRE/云原生/后端架构/AI 基础设施等指定工程领域"
     )
     reason: str = Field(description="一句话判定理由")
+    relevance_score: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="与目标领域的相关度 0~1；提供时与 system_settings.triage_threshold 比较",
+    )
 
 
 class ExtractionData(BaseModel):
@@ -96,7 +101,15 @@ class ExtractionData(BaseModel):
     )
     proposed_method: ProposedMethod
     knowledge_graph_nodes: KnowledgeGraphNodes
-    critical_analysis: CriticalAnalysis
+
+
+class AbstractTranslationResponse(BaseModel):
+    """arXiv 摘要专业中译（仅 LLM 输出校验用）。"""
+
+    translation: str = Field(
+        default="",
+        description="与原文信息对等的简体中文学术摘要译文，不得编造原文不存在的内容",
+    )
 
 
 class PaperExtractionResponse(BaseModel):
@@ -123,6 +136,10 @@ class PaperExtractionResponse(BaseModel):
     summary: str = Field(
         default="",
         description="arXiv 摘要等全文外文本，由流水线在 LLM 萃取后注入，用于入库与向量拼接",
+    )
+    summary_zh: str = Field(
+        default="",
+        description="摘要的专业简体中文译文，由流水线调用翻译模型写入；与 summary 信息对等",
     )
     embedding: Optional[List[float]] = Field(
         default=None,
@@ -224,20 +241,31 @@ class EvolutionTreeNode(BaseModel):
     id: str = Field(description="方法节点 ID (name)")
     name: str = Field(description="方法显示名称")
     generation: int = Field(description="代数 (0 = 目标方法, 负数 = 祖先)")
+    core_architecture: str = Field(
+        default="",
+        description="Method 节点上的核心技术架构摘要（图谱属性）",
+    )
 
 
 class EvolutionTreeLink(BaseModel):
-    """进化树中的链接."""
+    """进化树中的链接 (沿 EVOLVED_FROM：子方法 → 祖先)."""
 
-    source: str = Field(description="源方法 ID")
-    target: str = Field(description="目标方法 ID")
+    source: str = Field(description="源方法 ID（子方法 / 后代）")
+    target: str = Field(description="目标方法 ID（祖先）")
+    relationshipType: Optional[str] = Field(
+        default="EVOLVED_FROM", description="关系类型，默认技术血脉边"
+    )
+    reason: Optional[str] = Field(default=None, description="边上记录的演进原因")
+    discovered_at: Optional[str] = Field(default=None, description="边发现/写入时间")
+    dataset: Optional[str] = Field(default=None, description="遗留：实验对比边属性")
+    metrics_improvement: Optional[str] = Field(default=None, description="遗留：实验对比边属性")
 
 
 class EvolutionTreeResponse(BaseModel):
     """进化树响应.
 
     GET /api/v1/graph/evolution
-    返回方法的技术进化树，向上追溯 3 层祖先，向下扩展 3 层后代。
+    沿 [:EVOLVED_FROM] 向上追溯 3 层祖先、向下 3 层后代。
     格式: D3.js / ECharts Graph Node/Link 数组。
     """
 

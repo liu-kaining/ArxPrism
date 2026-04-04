@@ -31,7 +31,7 @@ const features = [
   {
     href: "/evolution",
     title: "技术进化树",
-    desc: "按方法名展开 IMPROVES_UPON 谱系，理解方法之间的改进关系；可从论文详情中的「提出方法」再跳转。",
+    desc: "按方法名沿 EVOLVED_FROM 展开技术血脉；可从论文详情中的「提出方法」再跳转。",
     icon: GitBranch,
   },
 ] as const;

@@ -14,8 +14,9 @@ Reference: ARCHITECTURE.md Section 5
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from src.api.auth import require_user
 from src.database.neo4j_client import neo4j_client
 from src.models.schemas import (
     APIResponse,
@@ -25,7 +26,11 @@ from src.worker.tasks import trigger_pipeline_task_async
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["pipeline", "graph"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["pipeline", "graph"],
+    dependencies=[Depends(require_user)],
+)
 
 
 @router.post("/pipeline/trigger", response_model=APIResponse, status_code=202)
@@ -132,7 +137,7 @@ async def get_paper_graph(arxiv_id: str) -> APIResponse:
 @router.get("/graph/evolution/methods", response_model=APIResponse)
 async def list_evolution_methods() -> APIResponse:
     """
-    列出可用于浏览进化树的方法（有 IMPROVES_UPON 的优先，其余为图中孤立 Method 节点）。
+    列出可用于浏览进化树的方法（有 EVOLVED_FROM 血脉边的优先，其余为图中无该边的 Method 节点）。
 
     GET /api/v1/graph/evolution/methods
     """
@@ -155,10 +160,11 @@ async def get_evolution_tree(
 
     GET /api/v1/graph/evolution?method_name={name}
 
-    向上追溯 3 层祖先 (该方法改进的方法)，
-    向下扩展 3 层后代 (改进该方法的方法)。
+    沿 EVOLVED_FROM 向上追溯 3 层祖先（该方法继承、扩展或受其启发的方法），
+    向下扩展 3 层后代（将本方法列为祖先的方法）。
 
     Response 格式: D3.js / ECharts Graph Node/Link 数组。
+    若库中无该方法或无进化边，仍返回 HTTP 200，nodes/links 为空数组（由前端提示）。
 
     Args:
         method_name: 目标方法名称
@@ -171,10 +177,17 @@ async def get_evolution_tree(
     try:
         tree_data = await neo4j_client.get_evolution_tree(method_name)
 
+        # 空结果用 200 + 空数组，避免日志/监控里刷屏 404。
+        # 常见原因：归一化后的 Method 不在库中，或尚未出现在任何 EVOLVED_FROM 边上。
         if not tree_data.get("nodes"):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Method '{method_name}' not found in graph database"
+            return APIResponse(
+                code=200,
+                message="success",
+                data={
+                    "method_name": method_name,
+                    "nodes": [],
+                    "links": [],
+                },
             )
 
         # Format response
@@ -182,7 +195,8 @@ async def get_evolution_tree(
             {
                 "id": n["id"],
                 "name": n["name"],
-                "generation": n["generation"]
+                "generation": n["generation"],
+                "core_architecture": (n.get("core_architecture") or "").strip(),
             }
             for n in tree_data["nodes"]
         ]
@@ -191,7 +205,9 @@ async def get_evolution_tree(
             {
                 "source": l["source"],
                 "target": l["target"],
-                "relationshipType": l.get("relationshipType", "IMPROVES_UPON"),
+                "relationshipType": l.get("relationshipType", "EVOLVED_FROM"),
+                "reason": l.get("reason") or "",
+                "discovered_at": l.get("discovered_at") or "",
                 "dataset": l.get("dataset") or "",
                 "metrics_improvement": l.get("metrics_improvement") or "",
             }
@@ -224,20 +240,29 @@ async def search_papers(
     ),
     limit: int = Query(20, ge=1, le=100, description="Page size"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
+    search_mode: str = Query(
+        "semantic",
+        description="semantic=向量相似度（带相对阈值）；keyword=标题/核心问题/方法名子串匹配",
+        pattern="^(semantic|keyword)$",
+    ),
 ) -> APIResponse:
     """
-    按主题/关键词检索已入库论文列表（主路径：查 SRE 主题）。
+    按主题/关键词检索已入库论文列表。
 
-    - query 为空：返回最近入库论文（仍受 task_topic 约束）
-    - query 非空：在 title/core_problem/method 中做 contains 匹配
-    - task_topic 非空：仅返回 ADDRESSES 对应 Task 标签匹配的论文
+    - query 为空：按时间倒序浏览（仍受 task_topic 约束）
+    - query 非空 + semantic：向量检索（与最高分挂钩的相对阈值 + 绝对下限）
+    - query 非空 + keyword：title/core_problem/method CONTAINS
     """
     try:
         total = await neo4j_client.count_search_papers(
-            query=query, task_topic=task_topic
+            query=query, task_topic=task_topic, search_mode=search_mode
         )
         rows = await neo4j_client.search_papers(
-            query=query, limit=limit, offset=offset, task_topic=task_topic
+            query=query,
+            limit=limit,
+            offset=offset,
+            task_topic=task_topic,
+            search_mode=search_mode,
         )
         return APIResponse(
             code=200,
@@ -245,6 +270,7 @@ async def search_papers(
             data={
                 "query": query,
                 "task_topic": task_topic,
+                "search_mode": search_mode,
                 "limit": limit,
                 "offset": offset,
                 "total": total,
@@ -266,6 +292,11 @@ async def get_papers_library_stats(
         "",
         description="与 GET /papers 一致；非空时与 query 组合过滤后再聚类 by_topic",
     ),
+    search_mode: str = Query(
+        "semantic",
+        description="与 GET /papers 的 search_mode 一致",
+        pattern="^(semantic|keyword)$",
+    ),
 ) -> APIResponse:
     """
     图库统计：论文总数、作者节点数、作者-论文关联、按萃取主题(Task)分组的篇数。
@@ -275,7 +306,9 @@ async def get_papers_library_stats(
     """
     try:
         stats = await neo4j_client.get_library_stats(
-            search_query=query, topic_filter=task_topic
+            search_query=query,
+            topic_filter=task_topic,
+            search_mode=search_mode,
         )
         return APIResponse(code=200, message="success", data=stats)
     except Exception as e:
