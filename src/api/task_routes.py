@@ -106,7 +106,7 @@ async def _dispatch_task_execution(
             domain_preset=domain_preset,
             max_results=max_results,
         )
-        logger.info(f"Task {task_id} dispatched to Celery worker")
+        logger.info("Task %s dispatched to Celery worker", task_id)
     else:
         asyncio.create_task(
             execute_task_pipeline_async(
@@ -116,7 +116,7 @@ async def _dispatch_task_execution(
                 max_results=max_results,
             )
         )
-        logger.info(f"Task {task_id} started in-process (no Celery)")
+        logger.info("Task %s started in-process (no Celery)", task_id)
 
 
 # =============================================================================
@@ -164,7 +164,7 @@ async def create_task(
     Returns:
         HTTP 201 Created with task_id
     """
-    logger.info(f"Creating task: query='{request.query}', domain='{request.domain_preset}'")
+    logger.info("Creating task: query='%s', domain='%s'", request.query, request.domain_preset)
 
     try:
         await _consume_one_task_quota(user)
@@ -201,7 +201,7 @@ async def create_task(
         )
 
     except Exception as e:
-        logger.error(f"Failed to create task: {e}")
+        logger.error("Failed to create task: %s", e)
         raise HTTPException(status_code=500, detail=f"Task creation failed: {str(e)}")
 
 
@@ -272,7 +272,7 @@ async def list_tasks(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to list tasks: {e}")
+        logger.error("Failed to list tasks: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}")
 
 
@@ -289,7 +289,7 @@ async def get_task(task_id: str) -> APIResponse:
     Returns:
         任务详情
     """
-    logger.info(f"Getting task: {task_id}")
+    logger.info("Getting task: %s", task_id)
 
     try:
         manager = await get_task_manager()
@@ -307,7 +307,7 @@ async def get_task(task_id: str) -> APIResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get task {task_id}: {e}")
+        logger.error("Failed to get task %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to get task: {str(e)}")
 
 
@@ -329,7 +329,7 @@ async def pause_task(task_id: str) -> APIResponse:
     Returns:
         操作结果
     """
-    logger.info(f"Pausing task: {task_id}")
+    logger.info("Pausing task: %s", task_id)
 
     try:
         manager = await get_task_manager()
@@ -355,7 +355,7 @@ async def pause_task(task_id: str) -> APIResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to pause task {task_id}: {e}")
+        logger.error("Failed to pause task %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to pause task: {str(e)}")
 
 
@@ -372,7 +372,7 @@ async def resume_task(task_id: str) -> APIResponse:
     Returns:
         操作结果
     """
-    logger.info(f"Resuming task: {task_id}")
+    logger.info("Resuming task: %s", task_id)
 
     try:
         manager = await get_task_manager()
@@ -398,7 +398,7 @@ async def resume_task(task_id: str) -> APIResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to resume task {task_id}: {e}")
+        logger.error("Failed to resume task %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to resume task: {str(e)}")
 
 
@@ -416,7 +416,7 @@ async def cancel_task(task_id: str) -> APIResponse:
     Returns:
         操作结果
     """
-    logger.info(f"Cancelling task: {task_id}")
+    logger.info("Cancelling task: %s", task_id)
 
     try:
         manager = await get_task_manager()
@@ -442,7 +442,7 @@ async def cancel_task(task_id: str) -> APIResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to cancel task {task_id}: {e}")
+        logger.error("Failed to cancel task %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to cancel task: {str(e)}")
 
 
@@ -463,7 +463,7 @@ async def retry_task(
     Returns:
         新任务信息
     """
-    logger.info(f"Retrying task: {task_id}")
+    logger.info("Retrying task: %s", task_id)
 
     try:
         manager = await get_task_manager()
@@ -511,7 +511,7 @@ async def retry_task(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to retry task {task_id}: {e}")
+        logger.error("Failed to retry task %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to retry task: {str(e)}")
 
 
@@ -557,5 +557,5 @@ async def get_task_progress(task_id: str) -> APIResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get task progress {task_id}: {e}")
+        logger.error("Failed to get task progress %s: %s", task_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to get progress: {str(e)}")

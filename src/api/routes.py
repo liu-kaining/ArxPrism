@@ -58,7 +58,7 @@ async def trigger_pipeline(
     Returns:
         HTTP 202 Accepted with task_id for tracking.
     """
-    logger.info(f"Pipeline trigger requested: query='{request.topic_query}'")
+    logger.info("Pipeline trigger requested: query='%s'", request.topic_query)
 
     effective_max = min(request.max_results, PIPELINE_TRIGGER_MAX_QUOTA_UNITS)
     try:
@@ -73,7 +73,7 @@ async def trigger_pipeline(
             max_results=effective_max,
         )
 
-        logger.info(f"Pipeline dispatched: {result}")
+        logger.info("Pipeline dispatched: %s", result)
 
         return APIResponse(
             code=202,
@@ -89,7 +89,7 @@ async def trigger_pipeline(
         await refund_n_task_quotas(user.id, effective_max)
         raise
     except Exception as e:
-        logger.error(f"Failed to trigger pipeline: {e}")
+        logger.error("Failed to trigger pipeline: %s", e)
         await refund_n_task_quotas(user.id, effective_max)
         raise HTTPException(status_code=500, detail=f"Pipeline trigger failed: {str(e)}")
 
@@ -109,7 +109,7 @@ async def get_paper_graph(arxiv_id: str) -> APIResponse:
     Returns:
         Graph nodes and relationships
     """
-    logger.info(f"Fetching paper graph: arxiv_id={arxiv_id}")
+    logger.info("Fetching paper graph: arxiv_id=%s", arxiv_id)
 
     try:
         graph_data = await neo4j_client.get_paper_graph(arxiv_id)
@@ -152,7 +152,7 @@ async def get_paper_graph(arxiv_id: str) -> APIResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to fetch paper graph: {e}")
+        logger.error("Failed to fetch paper graph: %s", e)
         raise HTTPException(status_code=500, detail=f"Graph fetch failed: {str(e)}")
 
 
@@ -167,7 +167,7 @@ async def list_evolution_methods() -> APIResponse:
         data = await neo4j_client.list_evolution_methods()
         return APIResponse(code=200, message="success", data=data)
     except Exception as e:
-        logger.error(f"Failed to list evolution methods: {e}")
+        logger.error("Failed to list evolution methods: %s", e)
         raise HTTPException(
             status_code=500, detail=f"Evolution method list failed: {str(e)}"
         ) from e
@@ -194,7 +194,7 @@ async def get_evolution_tree(
     Returns:
         Evolution tree with nodes (including generation info) and links
     """
-    logger.info(f"Fetching evolution tree: method={method_name}")
+    logger.info("Fetching evolution tree: method=%s", method_name)
 
     try:
         tree_data = await neo4j_client.get_evolution_tree(method_name)
@@ -249,7 +249,7 @@ async def get_evolution_tree(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to fetch evolution tree: {e}")
+        logger.error("Failed to fetch evolution tree: %s", e)
         raise HTTPException(status_code=500, detail=f"Evolution tree fetch failed: {str(e)}")
 
 
@@ -300,7 +300,7 @@ async def search_papers(
             },
         )
     except Exception as e:
-        logger.error(f"Failed to search papers: {e}")
+        logger.error("Failed to search papers: %s", e)
         raise HTTPException(status_code=500, detail=f"Paper search failed: {str(e)}")
 
 
@@ -334,7 +334,7 @@ async def get_papers_library_stats(
         )
         return APIResponse(code=200, message="success", data=stats)
     except Exception as e:
-        logger.error(f"Failed to get library stats: {e}")
+        logger.error("Failed to get library stats: %s", e)
         raise HTTPException(
             status_code=500, detail=f"Library stats failed: {str(e)}"
         )
@@ -359,7 +359,7 @@ async def get_paper_detail(arxiv_id: str) -> APIResponse:
     Returns:
         Paper detail with extraction data and graph
     """
-    logger.info(f"Fetching paper detail: arxiv_id={arxiv_id}")
+    logger.info("Fetching paper detail: arxiv_id=%s", arxiv_id)
 
     try:
         # 获取论文基本信息
@@ -408,5 +408,5 @@ async def get_paper_detail(arxiv_id: str) -> APIResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to fetch paper detail: {e}")
+        logger.error("Failed to fetch paper detail: %s", e)
         raise HTTPException(status_code=500, detail=f"Paper detail fetch failed: {str(e)}")

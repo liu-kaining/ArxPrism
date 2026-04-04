@@ -196,8 +196,8 @@ class LLMExtractor:
                     raise ValueError("empty triage response")
                 parsed = TriageResponse.model_validate_json(raw)
                 logger.info(
-                    f"Triage: is_relevant={parsed.is_relevant} "
-                    f"score={parsed.relevance_score} reason={parsed.reason[:120]!r}"
+                    "Triage: is_relevant=%s score=%s reason=%.120r",
+                    parsed.is_relevant, parsed.relevance_score, parsed.reason,
                 )
                 if parsed.relevance_score is None:
                     return bool(parsed.is_relevant)
@@ -206,19 +206,20 @@ class LLMExtractor:
                 )
             except (json.JSONDecodeError, ValidationError, ValueError) as e:
                 last_err = str(e)
-                logger.warning(f"Triage attempt {attempt}/{triage_retries} parse/validate failed: {e}")
+                logger.warning("Triage attempt %s/%s parse/validate failed: %s", attempt, triage_retries, e)
             except (RateLimitError, APITimeoutError) as e:
                 last_err = str(e)
-                logger.warning(f"Triage attempt {attempt}/{triage_retries} API error: {e}")
+                logger.warning("Triage attempt %s/%s API error: %s", attempt, triage_retries, e)
             except Exception as e:
                 last_err = str(e)
-                logger.error(f"Triage attempt {attempt}/{triage_retries} unexpected: {e}")
+                logger.error("Triage attempt %s/%s unexpected: %s", attempt, triage_retries, e)
 
             if attempt < triage_retries:
                 await asyncio.sleep(self.base_delay * attempt)
 
         logger.warning(
-            f"Triage failed after {triage_retries} attempts ({last_err}); fail-open -> proceed"
+            "Triage failed after %s attempts (%s); fail-open -> proceed",
+            triage_retries, last_err,
         )
         return True
 
@@ -317,7 +318,7 @@ class LLMExtractor:
         Returns:
             PaperExtractionResponse if successful, None otherwise
         """
-        logger.info(f"Starting LLM extraction for paper: {paper_id}")
+        logger.info("Starting LLM extraction for paper: %s", paper_id)
 
         if not (paper_text or "").strip():
             logger.warning(
@@ -326,17 +327,20 @@ class LLMExtractor:
             )
             return None
 
-        # 防止正文伪造 </PAPER_TEXT> 等闭合标签劫持用户消息块（Prompt/XML 注入）
-        safe_paper_text = paper_text.replace("<PAPER_TEXT>", "").replace(
-            "</PAPER_TEXT>", ""
-        )
+        # 防止正文伪造闭合标签/角色标签劫持消息块（Prompt/XML 注入）
+        safe_paper_text = paper_text
+        for tag in ("PAPER_TEXT", "SYSTEM", "system", "USER", "user",
+                     "ASSISTANT", "assistant", "INSTRUCTION", "instruction"):
+            safe_paper_text = safe_paper_text.replace(f"<{tag}>", "").replace(
+                f"</{tag}>", ""
+            )
         user_prompt = USER_PROMPT_TEMPLATE.replace("{paper_text}", safe_paper_text)
         last_error: str = "Unknown error"
         last_response: str = ""
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                logger.debug(f"LLM extraction attempt {attempt}/{self.max_retries}")
+                logger.debug("LLM extraction attempt %s/%s", attempt, self.max_retries)
 
                 response = await self.client.chat.completions.create(
                     model=settings.llm_extractor_model,
@@ -351,7 +355,7 @@ class LLMExtractor:
 
                 response_content = response.choices[0].message.content
                 last_response = response_content
-                logger.debug(f"LLM raw response: {response_content[:200]}...")
+                logger.debug("LLM raw response: %.200s...", response_content)
 
                 # =================================================================
                 # 关键: 使用 model_validate_json() 进行 Pydantic 校验
@@ -365,27 +369,27 @@ class LLMExtractor:
                 extraction.authors = authors
                 extraction.publication_date = publication_date
 
-                logger.info(f"Successfully extracted data for paper: {paper_id}")
+                logger.info("Successfully extracted data for paper: %s", paper_id)
                 return extraction
 
             except json.JSONDecodeError as e:
                 last_error = f"JSON parse failed: {e}"
                 logger.warning(
-                    f"Attempt {attempt}: JSON parse failed - {e}. "
-                    f"Response: {last_response[:100] if last_response else 'N/A'}"
+                    "Attempt %s: JSON parse failed - %s. Response: %.100s",
+                    attempt, e, last_response or "N/A",
                 )
 
             except ValidationError as e:
                 last_error = f"Pydantic validation failed: {e}"
-                logger.warning(f"Attempt {attempt}: Pydantic validation failed - {e}")
+                logger.warning("Attempt %s: Pydantic validation failed - %s", attempt, e)
 
             except (RateLimitError, APITimeoutError) as e:
                 last_error = f"API error: {e}"
-                logger.warning(f"Attempt {attempt}: API error - {e}")
+                logger.warning("Attempt %s: API error - %s", attempt, e)
 
             except Exception as e:
                 last_error = f"Unexpected error: {e}"
-                logger.error(f"Attempt {attempt}: Unexpected error - {e}")
+                logger.error("Attempt %s: Unexpected error - %s", attempt, e)
 
             # =================================================================
             # 指数退避延迟
@@ -393,7 +397,7 @@ class LLMExtractor:
             # =================================================================
             if attempt < self.max_retries:
                 delay = self.base_delay * (2 ** (attempt - 1))
-                logger.info(f"Retrying in {delay}s (exponential backoff)...")
+                logger.info("Retrying in %ss (exponential backoff)...", delay)
                 await asyncio.sleep(delay)
 
         # 所有重试都失败

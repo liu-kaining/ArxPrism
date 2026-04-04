@@ -15,7 +15,7 @@ Reference: ARCHITECTURE.md Section 5 (扩展)
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from uuid import uuid4
 
@@ -65,7 +65,7 @@ class TaskManager:
     async def connect(self) -> None:
         """初始化 Redis 连接."""
         if self._redis is None:
-            logger.info(f"Connecting to Redis at {settings.redis_url}")
+            logger.info("Connecting to Redis at %s", settings.redis_url)
             self._redis = aioredis.from_url(
                 settings.redis_url,
                 encoding="utf-8",
@@ -121,7 +121,7 @@ class TaskManager:
             创建的 Task 对象
         """
         task_id = str(uuid4())
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         task = Task(
             task_id=task_id,
@@ -141,7 +141,7 @@ class TaskManager:
         # 添加到最近任务列表
         await self._add_to_recent_tasks(task_id)
 
-        logger.info(f"Created task {task_id}: query='{query}', domain='{domain_preset}'")
+        logger.info("Created task %s: query='%s', domain='%s'", task_id, query, domain_preset)
         return task
 
     async def get_task(self, task_id: str) -> Optional[Task]:
@@ -170,7 +170,7 @@ class TaskManager:
         Args:
             task: Task 对象
         """
-        task.updated_at = datetime.utcnow()
+        task.updated_at = datetime.now(timezone.utc)
         await self._save_task(task)
 
     async def _save_task(self, task: Task) -> None:
@@ -307,7 +307,7 @@ class TaskManager:
         """
         task = await self.get_task(task_id)
         if task is None:
-            logger.warning(f"Task {task_id} not found for progress update")
+            logger.warning("Task %s not found for progress update", task_id)
             return
 
         # 更新进度
@@ -342,11 +342,11 @@ class TaskManager:
         """
         task = await self.get_task(task_id)
         if task is None:
-            logger.warning(f"Task {task_id} not found for adding result")
+            logger.warning("Task %s not found for adding result", task_id)
             return
 
         # 添加结果
-        result.processed_at = datetime.utcnow()
+        result.processed_at = datetime.now(timezone.utc)
         task.results.append(result)
 
         # 更新进度计数
@@ -383,14 +383,14 @@ class TaskManager:
             return False
 
         if task.status != TaskStatus.PENDING:
-            logger.warning(f"Task {task_id} cannot be started: status={task.status}")
+            logger.warning("Task %s cannot be started: status=%s", task_id, task.status)
             return False
 
         task.status = TaskStatus.RUNNING
-        task.started_at = datetime.utcnow()
+        task.started_at = datetime.now(timezone.utc)
         await self.update_task(task)
 
-        logger.info(f"Task {task_id} started")
+        logger.info("Task %s started", task_id)
         return True
 
     async def complete_task(
@@ -411,7 +411,7 @@ class TaskManager:
             return False
 
         task.status = TaskStatus.COMPLETED
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc)
         if completion_summary is not None:
             task.completion_summary = completion_summary
         await self.update_task(task)
@@ -444,13 +444,13 @@ class TaskManager:
 
         task.status = TaskStatus.FAILED
         task.error_message = error_message
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc)
         await self.update_task(task)
 
         # 清除暂停信号
         await self.clear_pause_signal(task_id)
 
-        logger.error(f"Task {task_id} failed: {error_message}")
+        logger.error("Task %s failed: %s", task_id, error_message)
         return True
 
     # =========================================================================
@@ -472,7 +472,7 @@ class TaskManager:
             return False
 
         if not task.can_pause:
-            logger.warning(f"Task {task_id} cannot be paused: status={task.status}")
+            logger.warning("Task %s cannot be paused: status=%s", task_id, task.status)
             return False
 
         # 设置暂停信号
@@ -483,7 +483,7 @@ class TaskManager:
         task.status = TaskStatus.PAUSED
         await self.update_task(task)
 
-        logger.info(f"Task {task_id} paused")
+        logger.info("Task %s paused", task_id)
         return True
 
     async def resume_task(self, task_id: str) -> bool:
@@ -501,7 +501,7 @@ class TaskManager:
             return False
 
         if not task.can_resume:
-            logger.warning(f"Task {task_id} cannot be resumed: status={task.status}")
+            logger.warning("Task %s cannot be resumed: status=%s", task_id, task.status)
             return False
 
         # 清除暂停信号
@@ -510,7 +510,7 @@ class TaskManager:
         task.status = TaskStatus.RUNNING
         await self.update_task(task)
 
-        logger.info(f"Task {task_id} resumed")
+        logger.info("Task %s resumed", task_id)
         return True
 
     async def cancel_task(self, task_id: str) -> bool:
@@ -528,7 +528,7 @@ class TaskManager:
             return False
 
         if not task.can_cancel:
-            logger.warning(f"Task {task_id} cannot be cancelled: status={task.status}")
+            logger.warning("Task %s cannot be cancelled: status=%s", task_id, task.status)
             return False
 
         # 设置取消信号
@@ -537,13 +537,13 @@ class TaskManager:
         await redis.setex(cancel_key, TASK_TTL, "1")
 
         task.status = TaskStatus.CANCELLED
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc)
         await self.update_task(task)
 
         # 清除暂停信号
         await self.clear_pause_signal(task_id)
 
-        logger.info(f"Task {task_id} cancelled")
+        logger.info("Task %s cancelled", task_id)
         return True
 
     async def is_paused(self, task_id: str) -> bool:

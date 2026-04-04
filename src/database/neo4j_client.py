@@ -13,7 +13,9 @@ CODE_REVIEW.md Section 1
 
 import logging
 import re
+import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,10 +32,7 @@ def _method_core_architecture(node: Any) -> str:
     """从 Neo4j Method 节点读取 core_architecture（字符串）。"""
     if node is None:
         return ""
-    try:
-        v = node.get("core_architecture")
-    except Exception:
-        v = None
+    v = node.get("core_architecture") if hasattr(node, "get") else None
     if v is None:
         return ""
     return str(v).strip()
@@ -47,7 +46,7 @@ _VECTOR_MIN_SCORE = 0.42
 _VECTOR_RELATIVE_FLOOR = 0.88
 _VECTOR_SCAN_CAP = 3000
 _EMBEDDING_DIM = 1536
-_QUERY_VEC_CACHE: Dict[str, tuple[List[float], float]] = {}
+_QUERY_VEC_CACHE: OrderedDict[str, tuple[List[float], float]] = OrderedDict()
 _QUERY_VEC_TTL_SEC = 300.0
 _QUERY_VEC_CACHE_MAX = 256
 
@@ -165,16 +164,18 @@ def _normalize_name(name: str) -> str:
     防线2实现:
     1. 转小写 + 去首尾空格
     2. 去除常见无意义后缀 (model, framework, algorithm, approach, method 等)
-    3. 剔除所有非字母和数字的特殊字符
+    3. 将连续空白/下划线/点号统一为单个连字符，保留字母数字间的连字符
+    4. 去首尾连字符
 
     Example:
-        "Deep-Log Model" -> "deeplog" (去后缀model，去连字符)
-        "DeepLog model" -> "deeplog" (去后缀model)
-        "DeepLog-model" -> "deeplogmodel" (无后缀，去连字符)
-        "LSTM-N" -> "lstmn" (去连字符)
+        "Deep-Log Model" -> "deep-log" (去后缀 model，保留连字符)
+        "DeepLog model"  -> "deeplog"  (去后缀 model)
+        "LSTM-N"         -> "lstm-n"   (保留连字符)
+        "GPT-4"          -> "gpt-4"    (保留连字符)
+        "X Net System"   -> "x-net"    (去后缀 system，空格转连字符)
 
     Returns:
-        归一化后的名称（全小写、无特殊字符）作为 MERGE 键
+        归一化后的名称（全小写、连字符分隔）作为 MERGE 键
     """
     if not name or not isinstance(name, str):
         return ""
@@ -185,12 +186,19 @@ def _normalize_name(name: str) -> str:
     if not normalized:
         return ""
 
-    # Step 2: 去除常见无意义后缀
+    # Step 2: 去除常见无意义后缀（空格分隔的尾词）
     for pattern in _ENTITY_SUFFIX_PATTERNS:
         normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
 
-    # Step 3: 剔除所有非字母和数字的特殊字符
-    normalized = re.sub(r'[^a-z0-9]', '', normalized)
+    normalized = normalized.strip()
+    if not normalized:
+        return ""
+
+    # Step 3: 将非字母数字字符统一为连字符，然后合并连续连字符
+    normalized = re.sub(r'[^a-z0-9]+', '-', normalized)
+
+    # Step 4: 去首尾连字符
+    normalized = normalized.strip('-')
 
     return normalized
 
@@ -219,17 +227,20 @@ class Neo4jClient:
     """异步图数据库客户端 (单例模式)."""
 
     _instance: Optional["Neo4jClient"] = None
+    _instance_lock = threading.Lock()
     _driver: Optional[AsyncDriver] = None
 
     def __new__(cls) -> "Neo4jClient":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
         return cls._instance
 
     async def connect(self) -> None:
         """初始化异步 Neo4j 驱动."""
         if self._driver is None:
-            logger.info(f"Connecting to Neo4j at {settings.neo4j_uri}")
+            logger.info("Connecting to Neo4j at %s", settings.neo4j_uri)
             self._driver = AsyncGraphDatabase.driver(
                 settings.neo4j_uri,
                 auth=(settings.neo4j_user, settings.neo4j_password),
@@ -321,7 +332,7 @@ class Neo4jClient:
             logger.info("Neo4j connectivity verified")
             return True
         except ServiceUnavailable as e:
-            logger.error(f"Neo4j connectivity failed: {e}")
+            logger.error("Neo4j connectivity failed: %s", e)
             return False
 
     async def upsert_paper_graph(self, data: PaperExtractionResponse) -> bool:
@@ -339,7 +350,7 @@ class Neo4jClient:
             True if successful, False otherwise
         """
         paper_id = data.paper_id
-        logger.info(f"Upserting paper graph for: {paper_id}")
+        logger.info("Upserting paper graph for: %s", paper_id)
 
         try:
             if self._driver is None:
@@ -349,10 +360,10 @@ class Neo4jClient:
                     self._upsert_transaction,
                     data
                 )
-            logger.info(f"Successfully upserted paper {paper_id}")
+            logger.info("Successfully upserted paper %s", paper_id)
             return True
         except Exception as e:
-            logger.error(f"Failed to upsert paper {paper_id}: {e}")
+            logger.error("Failed to upsert paper %s: %s", paper_id, e)
             return False
 
     async def _upsert_transaction(
@@ -387,7 +398,7 @@ class Neo4jClient:
         # =========================================================================
         # 1. MERGE Paper 节点 (按 arxiv_id 唯一合并)
         # =========================================================================
-        logger.debug(f"MERGing Paper node: {paper_id}")
+        logger.debug("MERGing Paper node: %s", paper_id)
         await tx.run(
             """
             MERGE (p:Paper {arxiv_id: $arxiv_id})
@@ -423,32 +434,32 @@ class Neo4jClient:
         )
 
         # =========================================================================
-        # 2. MERGE Author 节点和 WRITTEN_BY 关系
-        # 作者名仅 strip + lower，不用 _normalize_name，避免 "Y. Li" 与 "Ying Li" 被合并
+        # 2. MERGE Author 节点和 WRITTEN_BY 关系 (UNWIND 批量写入减少网络往返)
+        # 使用 strip 后的原始大小写作为 MERGE 键，降低同名不同人被错误合并的概率。
         # =========================================================================
-        for author_name in data.authors:
-            if not isinstance(author_name, str) or not author_name.strip():
-                continue
-            normalized_name = author_name.strip().lower()
-            logger.debug(f"MERGing Author: {author_name} -> key: {normalized_name}")
+        author_names = [
+            a.strip() for a in data.authors
+            if isinstance(a, str) and a.strip()
+        ]
+        if author_names:
+            logger.debug("MERGing %d Authors for paper %s", len(author_names), paper_id)
             await tx.run(
                 """
-                MERGE (a:Author {name: $name})
-                ON CREATE SET a.original_name = $original_name
-                ON MATCH SET a.original_name = $original_name
+                UNWIND $authors AS author_name
+                MERGE (a:Author {name: author_name})
                 WITH a
                 MATCH (p:Paper {arxiv_id: $arxiv_id})
                 MERGE (p)-[:WRITTEN_BY]->(a)
                 """,
-                name=normalized_name,
-                original_name=author_name,
-                arxiv_id=paper_id
+                authors=author_names,
+                arxiv_id=paper_id,
             )
 
         if extraction is None:
             logger.info(
-                f"Paper {paper_id}: extraction_data is None; "
-                "skipped Method/Dataset/EVOLVED_FROM edges"
+                "Paper %s: extraction_data is None; "
+                "skipped Method/Dataset/EVOLVED_FROM edges",
+                paper_id,
             )
             return
 
@@ -457,7 +468,7 @@ class Neo4jClient:
         if task_name and not _is_placeholder_entity_name(task_name):
             normalized_task = _normalize_name(task_name)
             if normalized_task:
-                logger.debug(f"MERGing Task: {task_name} -> normalized: {normalized_task}")
+                logger.debug("MERGing Task: %s -> normalized: %s", task_name, normalized_task)
                 await tx.run(
                     """
                     MERGE (t:Task {name: $task_name})
@@ -472,7 +483,7 @@ class Neo4jClient:
                     arxiv_id=paper_id,
                 )
             else:
-                logger.warning(f"Skipping empty normalized task_name: {task_name}")
+                logger.warning("Skipping empty normalized task_name: %s", task_name)
 
         # =========================================================================
         # 3. MERGE Method 节点和 PROPOSES 关系
@@ -485,9 +496,9 @@ class Neo4jClient:
 
             # 跳过空归一化结果
             if not normalized_method:
-                logger.warning(f"Skipping empty normalized method name: {method_name}")
+                logger.warning("Skipping empty normalized method name: %s", method_name)
             else:
-                logger.debug(f"MERGing Method: {method_name} -> normalized: {normalized_method}")
+                logger.debug("MERGing Method: %s -> normalized: %s", method_name, normalized_method)
                 await tx.run(
                     """
                     MERGE (m:Method {name: $name})
@@ -566,14 +577,31 @@ class Neo4jClient:
                                 ELSE anc.first_appeared
                             END
                         MERGE (child)-[r:EVOLVED_FROM]->(anc)
-                        SET r.reason = $evolution_reason,
-                            r.discovered_at = $published_date
+                        ON CREATE SET
+                            r.reason = $evolution_reason,
+                            r.discovered_at = $published_date,
+                            r.source_papers = [$paper_id]
+                        ON MATCH SET
+                            r.reason = CASE
+                                WHEN coalesce(r.reason, '') = '' THEN $evolution_reason
+                                ELSE r.reason
+                            END,
+                            r.discovered_at = CASE
+                                WHEN coalesce(r.discovered_at, '') = '' THEN $published_date
+                                ELSE r.discovered_at
+                            END,
+                            r.source_papers = CASE
+                                WHEN r.source_papers IS NULL THEN [$paper_id]
+                                WHEN NOT $paper_id IN r.source_papers THEN r.source_papers + $paper_id
+                                ELSE r.source_papers
+                            END
                         """,
                         child_name=normalized_method,
                         ancestor_name=normalized_ancestor,
                         ancestor_original_name=ancestor_raw,
                         published_date=published_date,
                         evolution_reason=reason_text,
+                        paper_id=paper_id,
                     )
 
                 # =========================================================================
@@ -650,9 +678,29 @@ class Neo4jClient:
                                 ELSE baseline.first_appeared
                             END
                         MERGE (improved)-[r:IMPROVES_UPON]->(baseline)
-                        SET r.dataset = $dataset,
+                        ON CREATE SET
+                            r.dataset = $dataset,
                             r.metrics_improvement = $metrics_improvement,
-                            r.discovered_at = $published_date
+                            r.discovered_at = $published_date,
+                            r.source_papers = [$paper_id]
+                        ON MATCH SET
+                            r.dataset = CASE
+                                WHEN coalesce(r.dataset, '') = '' THEN $dataset
+                                ELSE r.dataset
+                            END,
+                            r.metrics_improvement = CASE
+                                WHEN coalesce(r.metrics_improvement, '') = '' THEN $metrics_improvement
+                                ELSE r.metrics_improvement
+                            END,
+                            r.discovered_at = CASE
+                                WHEN coalesce(r.discovered_at, '') = '' THEN $published_date
+                                ELSE r.discovered_at
+                            END,
+                            r.source_papers = CASE
+                                WHEN r.source_papers IS NULL THEN [$paper_id]
+                                WHEN NOT $paper_id IN r.source_papers THEN r.source_papers + $paper_id
+                                ELSE r.source_papers
+                            END
                         """,
                         method_name=normalized_method,
                         baseline_name=normalized_baseline,
@@ -660,9 +708,10 @@ class Neo4jClient:
                         published_date=published_date,
                         dataset=dataset_raw,
                         metrics_improvement=metrics_text,
+                        paper_id=paper_id,
                     )
 
-        logger.debug(f"Completed upsert for paper: {paper_id}")
+        logger.debug("Completed upsert for paper: %s", paper_id)
 
     async def check_paper_exists(self, arxiv_id: str) -> bool:
         """
@@ -684,10 +733,10 @@ class Neo4jClient:
                 )
                 record = await result.single()
                 exists = record is not None
-            logger.debug(f"Paper {arxiv_id} exists: {exists}")
+            logger.debug("Paper %s exists: %s", arxiv_id, exists)
             return exists
         except Exception as e:
-            logger.error(f"Error checking paper existence: {e}")
+            logger.error("Error checking paper existence: %s", e)
             return False
 
     async def get_paper_graph(self, arxiv_id: str) -> Dict[str, Any]:
@@ -703,7 +752,7 @@ class Neo4jClient:
         Returns:
             Dict with 'nodes' and 'relationships' lists
         """
-        logger.info(f"Fetching paper graph for: {arxiv_id}")
+        logger.info("Fetching paper graph for: %s", arxiv_id)
 
         try:
             if self._driver is None:
@@ -757,11 +806,11 @@ class Neo4jClient:
                                 "type": rel.type
                             })
 
-                logger.info(f"Retrieved {len(nodes)} nodes and {len(relationships)} relationships")
+                logger.info("Retrieved %s nodes and %s relationships", len(nodes), len(relationships))
                 return {"nodes": nodes, "relationships": relationships}
 
         except Exception as e:
-            logger.error(f"Failed to fetch paper graph: {e}")
+            logger.error("Failed to fetch paper graph: %s", e)
             return {"nodes": [], "relationships": []}
 
     async def get_evolution_tree(self, method_name: str) -> Dict[str, Any]:
@@ -836,7 +885,6 @@ class Neo4jClient:
                 descendant_rows = await dres.data()
 
                 nodes: List[Dict[str, Any]] = []
-                links: List[Dict[str, Any]] = []
                 seen_methods: set = set()
 
                 if target:
@@ -850,7 +898,7 @@ class Neo4jClient:
                     )
                     seen_methods.add(target["name"])
 
-                # (child)-[:EVOLVED_FROM]->(ancestor)；generation = ±最短路径边数
+                # Collect nodes (ancestors: negative generation, descendants: positive)
                 for row in ancestor_rows:
                     ancestor = row.get("a")
                     depth = row.get("depth")
@@ -869,13 +917,6 @@ class Neo4jClient:
                         }
                     )
                     seen_methods.add(ancestor["name"])
-                    links.append(
-                        {
-                            "source": target["name"],
-                            "target": ancestor["name"],
-                            "relationshipType": "EVOLVED_FROM",
-                        }
-                    )
 
                 for row in descendant_rows:
                     descendant = row.get("d")
@@ -895,14 +936,9 @@ class Neo4jClient:
                         }
                     )
                     seen_methods.add(descendant["name"])
-                    links.append(
-                        {
-                            "source": descendant["name"],
-                            "target": target["name"],
-                            "relationshipType": "EVOLVED_FROM",
-                        }
-                    )
 
+                # Build links from actual EVOLVED_FROM edges between collected nodes
+                links: List[Dict[str, Any]] = []
                 id_list = list(seen_methods)
                 if id_list:
                     res_edges = await session.run(
@@ -917,26 +953,18 @@ class Neo4jClient:
                         """,
                         ids=id_list,
                     )
-                    edge_meta: Dict[tuple, Dict[str, str]] = {}
                     for edge_rec in await res_edges.data():
-                        key = (edge_rec["source"], edge_rec["target"])
-                        if key not in edge_meta:
-                            edge_meta[key] = {
+                        links.append(
+                            {
+                                "source": edge_rec["source"],
+                                "target": edge_rec["target"],
+                                "relationshipType": "EVOLVED_FROM",
                                 "reason": edge_rec.get("reason") or "",
                                 "discovered_at": edge_rec.get("discovered_at") or "",
                                 "dataset": edge_rec.get("dataset") or "",
-                                "metrics_improvement": edge_rec.get(
-                                    "metrics_improvement"
-                                )
-                                or "",
+                                "metrics_improvement": edge_rec.get("metrics_improvement") or "",
                             }
-                    for link in links:
-                        meta = edge_meta.get((link["source"], link["target"]))
-                        if meta:
-                            link["reason"] = meta["reason"]
-                            link["discovered_at"] = meta["discovered_at"]
-                            link["dataset"] = meta["dataset"]
-                            link["metrics_improvement"] = meta["metrics_improvement"]
+                        )
 
                 logger.info(
                     "Evolution tree: %s nodes, %s links", len(nodes), len(links)
@@ -944,7 +972,7 @@ class Neo4jClient:
                 return {"nodes": nodes, "links": links}
 
         except Exception as e:
-            logger.error(f"Failed to fetch evolution tree: {e}")
+            logger.error("Failed to fetch evolution tree: %s", e)
             return {"nodes": [], "links": []}
 
     async def list_evolution_methods(self) -> Dict[str, Any]:
@@ -1007,7 +1035,7 @@ class Neo4jClient:
                 len(other_methods),
             )
         except Exception as e:
-            logger.error(f"Failed to list evolution methods: {e}")
+            logger.error("Failed to list evolution methods: %s", e)
 
         return {"with_evolution": with_evolution, "other_methods": other_methods}
 
@@ -1039,13 +1067,13 @@ class Neo4jClient:
         key = (q_raw or "").strip().lower()
         if not key:
             return None
-        if len(_QUERY_VEC_CACHE) >= _QUERY_VEC_CACHE_MAX:
-            _QUERY_VEC_CACHE.clear()
         now = time.monotonic()
         hit = _QUERY_VEC_CACHE.get(key)
         if hit is not None:
             vec, ts = hit
             if now - ts <= _QUERY_VEC_TTL_SEC:
+                # Move to end (most recently used)
+                _QUERY_VEC_CACHE.move_to_end(key)
                 return vec
             del _QUERY_VEC_CACHE[key]
 
@@ -1053,6 +1081,9 @@ class Neo4jClient:
 
         vec = await get_llm_extractor().generate_embedding(q_raw)
         if vec and len(vec) == _EMBEDDING_DIM:
+            # Evict oldest entries if at capacity
+            while len(_QUERY_VEC_CACHE) >= _QUERY_VEC_CACHE_MAX:
+                _QUERY_VEC_CACHE.popitem(last=False)
             _QUERY_VEC_CACHE[key] = (vec, now)
             return vec
         return None
@@ -1113,7 +1144,6 @@ class Neo4jClient:
           authors AS authors,
           datasets AS datasets,
           metrics AS metrics,
-          baselines AS baselines,
           comparison_rows AS comparison_rows
         """
 
@@ -1181,7 +1211,7 @@ class Neo4jClient:
                     """
                         + expand_graph
                         + """
-                    ORDER BY p.published_date DESC
+                    ORDER BY p.published_date DESC, p.arxiv_id DESC
                     SKIP $offset
                     LIMIT $limit
                     """
@@ -1200,7 +1230,7 @@ class Neo4jClient:
                 )
             return rows
         except Exception as e:
-            logger.error(f"Failed to search papers: {e}")
+            logger.error("Failed to search papers: %s", e)
             return []
 
     async def count_search_papers(
@@ -1271,7 +1301,7 @@ class Neo4jClient:
                 row = await result.single()
                 return int(row["total"]) if row else 0
         except Exception as e:
-            logger.error(f"Failed to count search papers: {e}")
+            logger.error("Failed to count search papers: %s", e)
             return 0
 
     async def get_topic_breakdown_for_search(
@@ -1363,7 +1393,7 @@ class Neo4jClient:
                 for row in rows
             ]
         except Exception as e:
-            logger.error(f"Failed to get topic breakdown for search: {e}")
+            logger.error("Failed to get topic breakdown for search: %s", e)
             return []
 
     async def get_library_stats(
@@ -1448,7 +1478,7 @@ class Neo4jClient:
                         for row in rows
                     ]
         except Exception as e:
-            logger.error(f"Failed to get library stats: {e}")
+            logger.error("Failed to get library stats: %s", e)
 
         return out
 
@@ -1558,7 +1588,7 @@ class Neo4jClient:
             }
 
         except Exception as e:
-            logger.error(f"Failed to get paper by id: {e}")
+            logger.error("Failed to get paper by id: %s", e)
             return None
 
     async def get_all_method_names(self) -> List[str]:

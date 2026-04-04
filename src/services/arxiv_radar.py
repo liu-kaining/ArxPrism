@@ -17,6 +17,7 @@ CODE_REVIEW.md Section 2, 4
 import asyncio
 import logging
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -213,7 +214,11 @@ class ArxivRadar:
 
         results: list[PaperContent] = []
         examined = 0
-        for paper in self._iter_search_results(optimized_query, scan_cap):
+        # 同步 arxiv.Client 会阻塞事件循环，使用 to_thread 在线程池中执行搜索
+        all_candidates = await asyncio.to_thread(
+            lambda: list(self._iter_search_results(optimized_query, scan_cap))
+        )
+        for paper in all_candidates:
             examined += 1
             if len(results) >= max_results:
                 break
@@ -309,15 +314,13 @@ class ArxivRadar:
         try:
             exists = await neo4j_client.check_paper_exists(arxiv_id)
             if exists:
-                logger.info(f"Paper {arxiv_id} already exists in database, skipping")
+                logger.info("Paper %s already exists in database, skipping", arxiv_id)
                 return None
         except Exception as e:
-            logger.warning(f"Failed to check paper existence for {arxiv_id}: {e}")
+            logger.warning("Failed to check paper existence for %s: %s", arxiv_id, e)
 
-        # Step 2: Rate limiting (arXiv 君子协定)
-        await asyncio.sleep(self.rate_limit_delay)
-
-        # Step 2b: LLM 分诊（标题+摘要），不相关则绝不下载 PDF/HTML 全文
+        # Step 2: LLM 分诊（标题+摘要），不相关则绝不下载 PDF/HTML 全文
+        # 分诊不访问 arXiv，无需 rate limit
         abstract = getattr(paper, "summary", "") or ""
         try:
             rs = await get_runtime_pipeline_settings()
@@ -327,13 +330,16 @@ class ArxivRadar:
                 relevance_threshold=rs.triage_threshold,
             )
         except Exception as e:
-            logger.warning(f"Triage raised for {arxiv_id}, fail-open: {e}")
+            logger.warning("Triage raised for %s, fail-open: %s", arxiv_id, e)
             is_relevant = True
         if not is_relevant:
-            logger.info(f"Triage rejected: {arxiv_id}")
+            logger.info("Triage rejected: %s", arxiv_id)
             return None
 
-        # Step 3: 尝试获取全文 (HTML-First -> PDF 兜底 -> Summary)
+        # Step 3: Rate limiting (arXiv 君子协定) — 仅在即将发起 HTTP 请求时等待
+        await asyncio.sleep(self.rate_limit_delay)
+
+        # Step 4: 尝试获取全文 (HTML-First -> PDF 兜底 -> Summary)
         content = await self._fetch_paper_content(paper)
         return content
 
@@ -417,15 +423,14 @@ class ArxivRadar:
                     source="pdf",
                     summary=abstract,
                 )
-            logger.warning(f"Paper {arxiv_id}: PDF fallback failed or too short; trying summary")
+            logger.warning("Paper %s: PDF fallback failed or too short; trying summary", arxiv_id)
 
         # ===== 优先级 3: arXiv Summary 兜底 =====
-        text_content = abstract
-        if text_content:
-            text_content = self._compress_markdown(text_content)
+        # 摘要是纯文本，无 base64/噪声，跳过 _compress_markdown 避免误删公式/URL
+        text_content = (abstract or "").strip()
         if text_content and len(text_content) >= self.min_content_length:
             logger.info(
-                f"Paper {arxiv_id}: Summary fallback (priority 3) ({len(text_content)} chars)"
+                "Paper %s: Summary fallback (priority 3) (%s chars)", arxiv_id, len(text_content)
             )
             return PaperContent(
                 arxiv_id=arxiv_id,
@@ -443,29 +448,33 @@ class ArxivRadar:
                 summary=abstract,
             )
 
-        logger.error(f"Paper {arxiv_id}: All content extraction methods failed")
+        logger.error("Paper %s: All content extraction methods failed", arxiv_id)
         return None
 
     async def _try_fetch_from_pdf(self, arxiv_id: str) -> Optional[str]:
         """
-        从 arXiv 下载 PDF 到临时目录、抽取正文后删除临时文件。
+        从 arXiv 下载 PDF 到临时文件、抽取正文后删除。
+
+        使用 tempfile 避免并发下载同一 arxiv_id 时文件冲突。
 
         Returns:
             抽取的正文；失败返回 None。
         """
-        pdf_storage_path = Path(settings.pdf_storage_path)
-        pdf_storage_path.mkdir(parents=True, exist_ok=True)
-
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-        pdf_local_path = pdf_storage_path / f"{arxiv_id}.pdf"
+        pdf_local_path: Optional[Path] = None
 
         try:
-            logger.info(f"Downloading PDF (temp): {pdf_url}")
+            logger.info("Downloading PDF (temp): %s", pdf_url)
             async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
                 response = await client.get(pdf_url)
                 response.raise_for_status()
 
-                with open(pdf_local_path, "wb") as f:
+                # 使用 tempfile 创建唯一临时文件，避免并发冲突
+                fd, tmp_path = tempfile.mkstemp(
+                    suffix=".pdf", prefix=f"arxprism_{arxiv_id}_"
+                )
+                pdf_local_path = Path(tmp_path)
+                with open(fd, "wb") as f:
                     f.write(response.content)
 
                 file_size = len(response.content)
@@ -484,10 +493,10 @@ class ArxivRadar:
             return text_content
 
         except Exception as e:
-            logger.error(f"Failed to download/parse PDF for {arxiv_id}: {e}")
+            logger.error("Failed to download/parse PDF for %s: %s", arxiv_id, e)
             return None
         finally:
-            if pdf_local_path.exists():
+            if pdf_local_path is not None and pdf_local_path.exists():
                 try:
                     pdf_local_path.unlink()
                     logger.debug("Removed temp PDF: %s", pdf_local_path)
@@ -528,11 +537,11 @@ class ArxivRadar:
             full_text = re.sub(r"\s+", " ", full_text)
             full_text = full_text.strip()
 
-            logger.info(f"Extracted {len(full_text)} chars from PDF: {pdf_path}")
+            logger.info("Extracted %s chars from PDF: %s", len(full_text), pdf_path)
             return full_text
 
         except Exception as e:
-            logger.error(f"Failed to extract text from PDF {pdf_path}: {e}")
+            logger.error("Failed to extract text from PDF %s: %s", pdf_path, e)
             return None
 
     async def _try_fetch_from_html(
@@ -560,7 +569,7 @@ class ArxivRadar:
             return text_content
 
         except Exception as e:
-            logger.warning(f"Failed to fetch HTML for {arxiv_id}: {e}")
+            logger.warning("Failed to fetch HTML for %s: %s", arxiv_id, e)
             return None
 
     def _clean_html(self, html: str) -> str:

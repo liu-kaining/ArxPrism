@@ -56,12 +56,12 @@ async def lifespan(app: FastAPI):
                 neo4j_connected = True
                 break
             else:
-                logger.warning(f"Neo4j connection attempt {attempt}/{max_retries} failed - could not verify")
+                logger.warning("Neo4j connection attempt %d/%d failed - could not verify", attempt, max_retries)
         except Exception as e:
-            logger.warning(f"Neo4j connection attempt {attempt}/{max_retries} failed: {e}")
+            logger.warning("Neo4j connection attempt %d/%d failed: %s", attempt, max_retries, e)
 
         if attempt < max_retries:
-            logger.info(f"Retrying Neo4j connection in {retry_delay}s...")
+            logger.info("Retrying Neo4j connection in %ds...", retry_delay)
             import asyncio
             await asyncio.sleep(retry_delay)
 
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
         await task_manager.connect()
         logger.info("Redis connection established for task manager")
     except Exception as e:
-        logger.warning(f"Redis connection failed: {e}. Task management may not work properly.")
+        logger.warning("Redis connection failed: %s. Task management may not work properly.", e)
 
     yield
 

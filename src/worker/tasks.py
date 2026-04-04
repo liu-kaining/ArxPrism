@@ -83,7 +83,7 @@ def _is_redis_available() -> bool:
         r.ping()
         return True
     except Exception as e:
-        logger.warning(f"Redis unavailable: {e}. Falling back to sync mode.")
+        logger.warning("Redis unavailable: %s. Falling back to sync mode.", e)
         return False
 
 
@@ -164,7 +164,7 @@ async def _process_paper_async(
     """
     paper_id = paper_content.get("arxiv_id", "unknown")
     paper_title = paper_content.get("title", "")
-    logger.info(f"Processing paper: {paper_id}")
+    logger.info("Processing paper: %s", paper_id)
 
     result = PaperProcessingResult(
         arxiv_id=paper_id,
@@ -186,7 +186,7 @@ async def _process_paper_async(
         )
 
         # Step 2: 调用 LLM 萃取 (异步)
-        logger.info(f"Paper {paper_id}: Running LLM extraction...")
+        logger.info("Paper %s: Running LLM extraction...", paper_id)
         extraction = await llm_extractor.extract(
             paper_text=content.text_content,
             paper_id=content.arxiv_id,
@@ -196,7 +196,7 @@ async def _process_paper_async(
         )
 
         if extraction is None:
-            logger.warning(f"Paper {paper_id}: Extraction returned None")
+            logger.warning("Paper %s: Extraction returned None", paper_id)
             result.status = PaperProcessingStatus.FAILED
             result.message = "LLM extraction failed after all retries"
             return result
@@ -204,8 +204,9 @@ async def _process_paper_async(
         # Step 3: 检查领域相关性
         if not extraction.is_relevant_to_domain:
             logger.info(
-                f"Paper {paper_id}: Domain gatekeeper rejected - "
-                f"not in SRE/cloud-native/AIOps domain"
+                "Paper %s: Domain gatekeeper rejected - "
+                "not in SRE/cloud-native/AIOps domain",
+                paper_id,
             )
             result.status = PaperProcessingStatus.SKIPPED
             result.message = "Domain not relevant (filtered by LLM)"
@@ -214,7 +215,8 @@ async def _process_paper_async(
 
         if extraction.extraction_data is None:
             logger.warning(
-                f"Paper {paper_id}: is_relevant_to_domain but extraction_data is missing"
+                "Paper %s: is_relevant_to_domain but extraction_data is missing",
+                paper_id,
             )
             result.status = PaperProcessingStatus.FAILED
             result.message = "LLM omitted extraction_data for a domain-relevant paper"
@@ -225,7 +227,7 @@ async def _process_paper_async(
         sum_txt = (paper_content.get("summary") or "").strip()
         summary_zh = ""
         if sum_txt:
-            logger.info(f"Paper {paper_id}: Translating abstract to zh-CN...")
+            logger.info("Paper %s: Translating abstract to zh-CN...", paper_id)
             tr = await llm_extractor.translate_arxiv_abstract_to_zh(
                 abstract_en=sum_txt,
                 paper_title=extraction.title or "",
@@ -233,7 +235,8 @@ async def _process_paper_async(
             summary_zh = (tr or "").strip()
             if not summary_zh:
                 logger.warning(
-                    f"Paper {paper_id}: Abstract translation missing; summary_zh left empty"
+                    "Paper %s: Abstract translation missing; summary_zh left empty",
+                    paper_id,
                 )
         embed_parts = [extraction.title or "", ed.core_problem or ""]
         if sum_txt:
@@ -246,24 +249,26 @@ async def _process_paper_async(
         extraction = extraction.model_copy(update=upd)
 
         # Step 4: 写入 Neo4j (异步)
-        logger.info(f"Paper {paper_id}: Upserting to Neo4j graph...")
+        logger.info("Paper %s: Upserting to Neo4j graph...", paper_id)
         upsert_success = await neo4j_client.upsert_paper_graph(extraction)
 
         if not upsert_success:
-            logger.error(f"Paper {paper_id}: Neo4j upsert failed")
+            logger.error("Paper %s: Neo4j upsert failed", paper_id)
             result.status = PaperProcessingStatus.FAILED
             result.message = "Neo4j upsert failed"
             return result
 
-        logger.info(f"Paper {paper_id}: Successfully processed")
+        logger.info("Paper %s: Successfully processed", paper_id)
         result.status = PaperProcessingStatus.SUCCESS
-        result.method_name = extraction.extraction_data.proposed_method.name
+        ed_final = extraction.extraction_data
+        if ed_final and ed_final.proposed_method:
+            result.method_name = ed_final.proposed_method.name
         result.is_relevant = True
         result.message = "Successfully processed and stored"
         return result
 
     except Exception as e:
-        logger.error(f"Paper {paper_id}: Processing failed - {e}")
+        logger.error("Paper %s: Processing failed - %s", paper_id, e)
         result.status = PaperProcessingStatus.FAILED
         result.message = str(e)
         return result
@@ -284,7 +289,7 @@ async def _execute_task_pipeline(
         domain_preset: 领域预设
         max_results: 最大论文数
     """
-    logger.info(f"Starting task {task_id}: query='{query}', domain='{domain_preset}'")
+    logger.info("Starting task %s: query='%s', domain='%s'", task_id, query, domain_preset)
 
     try:
         # 连接任务管理器
@@ -334,7 +339,7 @@ async def _execute_task_pipeline(
         for i, paper in enumerate(papers):
             # 检查取消信号
             if await task_manager.is_cancelled(task_id):
-                logger.info(f"Task {task_id}: Cancelled by user")
+                logger.info("Task %s: Cancelled by user", task_id)
                 await task_manager.clear_cancel_signal(task_id)
                 return
 
@@ -342,7 +347,7 @@ async def _execute_task_pipeline(
             if await task_manager.is_paused(task_id):
                 resumed = await task_manager.wait_while_paused(task_id)
                 if not resumed:
-                    logger.info(f"Task {task_id}: Cancelled while paused")
+                    logger.info("Task %s: Cancelled while paused", task_id)
                     return
 
             # 更新当前处理论文
@@ -368,18 +373,15 @@ async def _execute_task_pipeline(
             # 更新任务结果
             await task_manager.add_paper_result(task_id, result)
 
-            logger.info(f"Task {task_id}: Paper {paper.arxiv_id} - {result.status}")
+            logger.info("Task %s: Paper %s - %s", task_id, paper.arxiv_id, result.status)
 
         # 任务完成
         await task_manager.complete_task(task_id)
-        logger.info(f"Task {task_id}: Completed successfully")
+        logger.info("Task %s: Completed successfully", task_id)
 
     except Exception as e:
-        logger.error(f"Task {task_id}: Failed with error - {e}")
+        logger.error("Task %s: Failed with error - %s", task_id, e)
         await task_manager.fail_task(task_id, str(e))
-
-    finally:
-        await task_manager.close()
 
 
 # =============================================================================
@@ -414,7 +416,7 @@ def process_paper_task(self, paper_content: dict) -> dict:
     try:
         return _run_async(_process_paper_async(paper_content))
     except Exception as e:
-        logger.error(f"Task failed: {e}")
+        logger.error("Task failed: %s", e)
         raise self.retry(exc=e)
 
 
@@ -436,12 +438,12 @@ def trigger_pipeline_sync(topic_query: str, max_results: int = 10, domain_preset
     Returns:
         Dict with processing results
     """
-    logger.info(f"[SYNC MODE] Processing pipeline: query='{topic_query}', domain='{domain_preset}', max_results={max_results}")
+    logger.info("[SYNC MODE] Processing pipeline: query='%s', domain='%s', max_results=%s", topic_query, domain_preset, max_results)
 
     async def _run():
         # Fetch papers
         papers = await arxiv_radar.fetch_recent_papers(topic_query, max_results, domain_preset)
-        logger.info(f"[SYNC MODE] Fetched {len(papers)} papers")
+        logger.info("[SYNC MODE] Fetched %s papers", len(papers))
 
         # Process papers
         results = []
@@ -457,7 +459,7 @@ def trigger_pipeline_sync(topic_query: str, max_results: int = 10, domain_preset
             }
             result = await _process_paper_async(content_dict)
             results.append(result)
-            logger.debug(f"[SYNC MODE] Processed paper {paper.arxiv_id}: {result.status}")
+            logger.debug("[SYNC MODE] Processed paper %s: %s", paper.arxiv_id, result.status)
 
         return results
 
@@ -465,7 +467,7 @@ def trigger_pipeline_sync(topic_query: str, max_results: int = 10, domain_preset
     results = _run_async(_run())
 
     success_count = sum(1 for r in results if r.status == PaperProcessingStatus.SUCCESS)
-    logger.info(f"[SYNC MODE] Pipeline complete: {success_count}/{len(results)} succeeded")
+    logger.info("[SYNC MODE] Pipeline complete: %s/%s succeeded", success_count, len(results))
 
     return {
         "status": "sync_completed",
@@ -480,10 +482,10 @@ async def trigger_pipeline_sync_async(topic_query: str, max_results: int = 10, d
     """
     同步回退（异步版本）: 供 FastAPI 这类已有事件循环的场景使用。
     """
-    logger.info(f"[SYNC MODE][ASYNC] Processing pipeline: query='{topic_query}', domain='{domain_preset}', max_results={max_results}")
+    logger.info("[SYNC MODE][ASYNC] Processing pipeline: query='%s', domain='%s', max_results=%s", topic_query, domain_preset, max_results)
 
     papers = await arxiv_radar.fetch_recent_papers(topic_query, max_results, domain_preset)
-    logger.info(f"[SYNC MODE][ASYNC] Fetched {len(papers)} papers")
+    logger.info("[SYNC MODE][ASYNC] Fetched %s papers", len(papers))
 
     results = []
     for paper in papers:
@@ -498,10 +500,10 @@ async def trigger_pipeline_sync_async(topic_query: str, max_results: int = 10, d
         }
         result = await _process_paper_async(content_dict)
         results.append(result)
-        logger.debug(f"[SYNC MODE][ASYNC] Processed paper {paper.arxiv_id}: {result.status}")
+        logger.debug("[SYNC MODE][ASYNC] Processed paper %s: %s", paper.arxiv_id, result.status)
 
     success_count = sum(1 for r in results if r.status == PaperProcessingStatus.SUCCESS)
-    logger.info(f"[SYNC MODE][ASYNC] Pipeline complete: {success_count}/{len(results)} succeeded")
+    logger.info("[SYNC MODE][ASYNC] Pipeline complete: %s/%s succeeded", success_count, len(results))
 
     return {
         "status": "sync_completed",
@@ -521,7 +523,6 @@ async def trigger_pipeline_task_async(
     topic_query: str,
     max_results: int = 10,
     domain_preset: str = "sre",
-    task_id: str = None
 ) -> dict:
     """
     触发流水线（异步版本）.
@@ -533,10 +534,10 @@ async def trigger_pipeline_task_async(
     if celery_app is None:
         return await trigger_pipeline_sync_async(topic_query, max_results, domain_preset)
 
-    logger.info(f"Triggering pipeline via Celery: query='{topic_query}', domain='{domain_preset}', max_results={max_results}")
+    logger.info("Triggering pipeline via Celery: query='%s', domain='%s', max_results=%s", topic_query, domain_preset, max_results)
 
     papers = await arxiv_radar.fetch_recent_papers(topic_query, max_results, domain_preset)
-    logger.info(f"Fetched {len(papers)} new papers")
+    logger.info("Fetched %s new papers", len(papers))
 
     task_func = get_process_paper_task()
 
@@ -555,13 +556,13 @@ async def trigger_pipeline_task_async(
         if hasattr(task_func, "delay"):
             task = task_func.delay(content_dict)
             task_ids.append(task.id)
-            logger.debug(f"Dispatched task {task.id} for paper {paper.arxiv_id}")
+            logger.debug("Dispatched task %s for paper %s", task.id, paper.arxiv_id)
         else:
             # fallback (shouldn't happen here, but keep behavior consistent)
             result = await task_func(content_dict)
-            logger.debug(f"Async processing for paper {paper.arxiv_id}: {result.status}")
+            logger.debug("Async processing for paper %s: %s", paper.arxiv_id, result.status)
 
-    logger.info(f"Pipeline triggered: {len(task_ids)} tasks dispatched")
+    logger.info("Pipeline triggered: %s tasks dispatched", len(task_ids))
     return {"status": "dispatched", "task_count": len(task_ids), "task_ids": task_ids}
 
 
@@ -647,9 +648,9 @@ def run_task_pipeline_task(
         Dict with status
     """
     try:
-        logger.info(f"Celery task started: task_id={task_id}")
+        logger.info("Celery task started: task_id=%s", task_id)
         _run_async(execute_task_pipeline_async(task_id, query, domain_preset, max_results))
         return {"status": "completed", "task_id": task_id}
     except Exception as e:
-        logger.error(f"Celery task failed: task_id={task_id}, error={e}")
+        logger.error("Celery task failed: task_id=%s, error=%s", task_id, e)
         raise self.retry(exc=e)
