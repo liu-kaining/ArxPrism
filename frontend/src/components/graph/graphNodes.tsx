@@ -148,9 +148,15 @@ function showCoreArchitecture(raw: string | undefined): string | null {
   return s;
 }
 
+function safeGenerationLabel(v: unknown): number {
+  const n = typeof v === "number" && !Number.isNaN(v) ? v : Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
 export function EvolutionGraphNode({ data }: NodeProps) {
-  const d = data as EvolutionNodeData;
-  const isRoot = d.generation === 0;
+  const d = (data ?? {}) as EvolutionNodeData;
+  const gen = safeGenerationLabel(d.generation);
+  const isRoot = gen === 0;
   const arch = showCoreArchitecture(d.core_architecture);
   return (
     <>
@@ -167,14 +173,14 @@ export function EvolutionGraphNode({ data }: NodeProps) {
         }`}
       >
         <div className="font-mono text-[10px] text-stone-500">
-          G{d.generation}
+          G{gen}
         </div>
         <div
           className={`text-sm font-semibold leading-snug ${
             isRoot ? "text-cyan-950" : "text-stone-900"
           }`}
         >
-          {d.label}
+          {d.label ?? ""}
         </div>
         {arch ? (
           <div className="mt-1 font-mono text-[10px] font-medium tracking-tight text-violet-600/95">

@@ -69,6 +69,26 @@ async def _consume_one_task_quota(user: CurrentUser) -> None:
     )
 
 
+# /pipeline/trigger 每篇待发论文预扣 1 点配额，封顶避免单次 RPC 风暴与 LLM 刷爆
+PIPELINE_TRIGGER_MAX_QUOTA_UNITS = 30
+
+
+async def consume_n_task_quotas(user: CurrentUser, n: int) -> None:
+    """创建任务类写操作：连续扣 n 次任务配额（用于 legacy pipeline 与 max_results 对齐）。"""
+    count = max(0, min(int(n), PIPELINE_TRIGGER_MAX_QUOTA_UNITS))
+    for _ in range(count):
+        await _consume_one_task_quota(user)
+
+
+async def refund_n_task_quotas(user_id: str, n: int) -> None:
+    """pipeline 触发在 dispatch 前失败时回滚已扣配额。"""
+    if settings.auth_disabled:
+        return
+    count = max(0, min(int(n), PIPELINE_TRIGGER_MAX_QUOTA_UNITS))
+    for _ in range(count):
+        await supabase_backend.rpc_refund_task_quota(user_id)
+
+
 async def _dispatch_task_execution(
     task_id: str,
     query: str,

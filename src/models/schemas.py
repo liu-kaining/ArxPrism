@@ -9,28 +9,70 @@ v2.0：`KnowledgeGraphNodes` 使用立体 `comparisons`；`ExtractionData` 含 C
 Reference: PROMPT_ENGINEERING.md Section 2, ARCHITECTURE.md Section 4
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
+
+# LLM 输出长度硬顶：防巨型字符串撑爆 Neo4j MERGE / 索引与内存
+_MAX_METHOD_NAME = 200
+_MAX_METHOD_DESC = 2000
+_MAX_ARCH = 500
+_MAX_LIST_ITEM = 500
+_MAX_LIST_LEN = 50
+_MAX_LINEAGE_NAME = 200
+_MAX_EVOLUTION_REASON = 4000
+_MAX_METRICS_STR = 500
+_MAX_REASONING = 8000
+_MAX_CORE_PROBLEM = 2000
+_MAX_TASK_NAME = 200
+_MAX_PAPER_TITLE = 2048
+_MAX_PAPER_ID = 64
+_MAX_SUMMARY = 120_000
+_MAX_TRANSLATION = 120_000
 
 
 class ProposedMethod(BaseModel):
     """论文提出的方法/架构."""
 
-    name: str = Field(description="提出的核心方法或系统名称")
-    description: str = Field(description="该方法的一句话核心介绍")
-    core_architecture: str = Field(default="NOT_MENTIONED", description="核心技术架构或机制（如 Transformer, 动态阈值, RLHF）")
-    key_innovations: List[str] = Field(default_factory=list, description="该方法的核心技术创新点列表")
-    limitations: List[str] = Field(default_factory=list, description="论文中承认的该方法的局限性或缺陷")
+    name: str = Field(max_length=_MAX_METHOD_NAME, description="提出的核心方法或系统名称")
+    description: str = Field(max_length=_MAX_METHOD_DESC, description="该方法的一句话核心介绍")
+    core_architecture: str = Field(
+        default="NOT_MENTIONED",
+        max_length=_MAX_ARCH,
+        description="核心技术架构或机制（如 Transformer, 动态阈值, RLHF）",
+    )
+    key_innovations: List[str] = Field(
+        default_factory=list,
+        description="该方法的核心技术创新点列表",
+    )
+    limitations: List[str] = Field(
+        default_factory=list,
+        description="论文中承认的该方法的局限性或缺陷",
+    )
+
+    @field_validator("key_innovations", "limitations", mode="before")
+    @classmethod
+    def _sanitize_str_lists(cls, v: object) -> List[str]:
+        if not isinstance(v, list):
+            return []
+        out: List[str] = []
+        for s in v[:_MAX_LIST_LEN]:
+            if isinstance(s, str):
+                t = s.strip()
+                if t:
+                    out.append(t[:_MAX_LIST_ITEM])
+        return out
 
 
 class EvolutionLineage(BaseModel):
     """技术血脉：提出的方法建立在哪些既有工作之上、受谁启发或扩展了谁。"""
 
     ancestor_method: str = Field(
-        description="被继承、扩展或受其启发的祖先方法名称（如 'ResNet', 'Transformer', 'DeepLog'）"
+        max_length=_MAX_LINEAGE_NAME,
+        description="被继承、扩展或受其启发的祖先方法名称（如 'ResNet', 'Transformer', 'DeepLog'）",
     )
     evolution_reason: str = Field(
-        description="具体的演进原因或继承特性（如 '引入了其多头注意力机制', '改进了其在长文本下的显存瓶颈'）"
+        max_length=_MAX_EVOLUTION_REASON,
+        description="具体的演进原因或继承特性（如 '引入了其多头注意力机制', '改进了其在长文本下的显存瓶颈'）",
     )
 
 
@@ -39,14 +81,17 @@ class ExperimentComparison(BaseModel):
 
     baseline_method: str = Field(
         default="",
+        max_length=_MAX_LINEAGE_NAME,
         description="作为基线的对比方法名称",
     )
     dataset: str = Field(
         default="",
+        max_length=_MAX_LINEAGE_NAME,
         description="实验使用的数据集或环境",
     )
     metrics_improvement: str = Field(
         default="",
+        max_length=_MAX_METRICS_STR,
         description="核心指标的具体提升（如 F1 +5%, Latency -10ms）",
     )
 
@@ -63,6 +108,20 @@ class KnowledgeGraphNodes(BaseModel):
         description="具体的对比实验结果列表。记录在什么数据集上相对什么基线、指标如何变化。",
     )
 
+    @field_validator("evolution_lineages", mode="before")
+    @classmethod
+    def _cap_lineages_count(cls, v: object) -> object:
+        if isinstance(v, list):
+            return v[:64]
+        return v
+
+    @field_validator("comparisons", mode="before")
+    @classmethod
+    def _cap_comparisons_count(cls, v: object) -> object:
+        if isinstance(v, list):
+            return v[:128]
+        return v
+
 
 class TriageResponse(BaseModel):
     """轻量级领域分诊（标题+摘要），用于在下载全文前过滤无关论文以节约 Token。"""
@@ -70,7 +129,7 @@ class TriageResponse(BaseModel):
     is_relevant: bool = Field(
         description="是否属于计算机系统/SRE/云原生/后端架构/AI 基础设施等指定工程领域"
     )
-    reason: str = Field(description="一句话判定理由")
+    reason: str = Field(max_length=2000, description="一句话判定理由")
     relevance_score: Optional[float] = Field(
         default=None,
         ge=0.0,
@@ -84,6 +143,7 @@ class ExtractionData(BaseModel):
 
     reasoning_process: str = Field(
         default="",
+        max_length=_MAX_REASONING,
         description=(
             "思维链推理过程：仔细阅读论文的实验部分，思考提出了什么方法，"
             "在哪些数据集上和哪些基线模型做了对比？"
@@ -91,10 +151,12 @@ class ExtractionData(BaseModel):
     )
     core_problem: str = Field(
         default="NOT_MENTIONED",
-        description="一句话总结要解决的底层痛点"
+        max_length=_MAX_CORE_PROBLEM,
+        description="一句话总结要解决的底层痛点",
     )
     task_name: str = Field(
         default="NOT_MENTIONED",
+        max_length=_MAX_TASK_NAME,
         description=(
             "该论文要解决的核心任务专有名词，如 'Root Cause Analysis', 'Log Anomaly Detection'"
         ),
@@ -108,6 +170,7 @@ class AbstractTranslationResponse(BaseModel):
 
     translation: str = Field(
         default="",
+        max_length=_MAX_TRANSLATION,
         description="与原文信息对等的简体中文学术摘要译文，不得编造原文不存在的内容",
     )
 
@@ -122,10 +185,24 @@ class PaperExtractionResponse(BaseModel):
         default=False,
         description="领域安全锁：如果该论文不属于SRE/分布式/云原生/AIOps领域，必须返回False"
     )
-    paper_id: str = Field(description="论文的 arXiv ID (无版本号)")
-    title: str = Field(description="论文英文标题")
-    authors: List[str] = Field(default_factory=list, description="作者列表")
-    publication_date: str = Field(description="发布日期 YYYY-MM-DD")
+    paper_id: str = Field(max_length=_MAX_PAPER_ID, description="论文的 arXiv ID (无版本号)")
+    title: str = Field(max_length=_MAX_PAPER_TITLE, description="论文英文标题")
+    authors: List[str] = Field(
+        default_factory=list,
+        description="作者列表",
+    )
+    publication_date: str = Field(max_length=32, description="发布日期 YYYY-MM-DD")
+
+    @field_validator("authors", mode="before")
+    @classmethod
+    def _sanitize_authors(cls, v: object) -> List[str]:
+        if not isinstance(v, list):
+            return []
+        out: List[str] = []
+        for a in v[:256]:
+            if isinstance(a, str) and a.strip():
+                out.append(a.strip()[:512])
+        return out
     extraction_data: Optional[ExtractionData] = Field(
         default=None,
         description=(
@@ -135,10 +212,12 @@ class PaperExtractionResponse(BaseModel):
     )
     summary: str = Field(
         default="",
+        max_length=_MAX_SUMMARY,
         description="arXiv 摘要等全文外文本，由流水线在 LLM 萃取后注入，用于入库与向量拼接",
     )
     summary_zh: str = Field(
         default="",
+        max_length=_MAX_TRANSLATION,
         description="摘要的专业简体中文译文，由流水线调用翻译模型写入；与 summary 信息对等",
     )
     embedding: Optional[List[float]] = Field(
@@ -151,12 +230,24 @@ class EntityCluster(BaseModel):
     """LLM 建议的同义 Method 聚类（物理融合前契约）。"""
 
     primary_name: str = Field(
-        description="该技术最标准、最广为人知的核心名称（如 'deeplog' 或 'llm'）"
+        max_length=_MAX_METHOD_NAME,
+        description="该技术最标准、最广为人知的核心名称（如 'deeplog' 或 'llm'）",
     )
     aliases: List[str] = Field(
         default_factory=list,
         description="应该被合并到 primary_name 的其他别名列表",
     )
+
+    @field_validator("aliases", mode="before")
+    @classmethod
+    def _cap_aliases(cls, v: object) -> List[str]:
+        if not isinstance(v, list):
+            return []
+        out: List[str] = []
+        for s in v[:64]:
+            if isinstance(s, str) and s.strip():
+                out.append(s.strip()[:_MAX_METHOD_NAME])
+        return out
 
 
 class EntityResolutionResponse(BaseModel):
@@ -166,6 +257,13 @@ class EntityResolutionResponse(BaseModel):
         default_factory=list,
         description="识别出的实体同义词聚类列表",
     )
+
+    @field_validator("clusters", mode="before")
+    @classmethod
+    def _cap_clusters_count(cls, v: object) -> object:
+        if isinstance(v, list):
+            return v[:256]
+        return v
 
 
 # =============================================================================
@@ -191,7 +289,8 @@ class PipelineTriggerRequest(BaseModel):
     """
 
     topic_query: str = Field(
-        description="arXiv 搜索查询 (例如: 'all:\"site reliability engineering\" OR all:\"microservices root cause\"')"
+        max_length=2000,
+        description="arXiv 搜索查询 (例如: 'all:\"site reliability engineering\" OR all:\"microservices root cause\"')",
     )
     max_results: int = Field(
         default=10,

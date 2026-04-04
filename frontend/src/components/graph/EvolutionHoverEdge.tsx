@@ -8,6 +8,13 @@ import {
   type EdgeProps,
 } from "@xyflow/react";
 
+function safeTrim(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return "";
+}
+
 export type EvolutionEdgePayload = {
   relationshipType?: string;
   metrics?: string[];
@@ -49,13 +56,15 @@ export function EvolutionHoverEdge({
   const stroke = hover ? "#b45309" : "#78716c";
   const strokeWidth = hover ? 2.25 : 1.5;
 
-  const rel = d?.relationshipType?.trim() || "EVOLVED_FROM";
-  const reason = d?.reason?.trim() ?? "";
-  const at = d?.discovered_at?.trim() ?? "";
-  const dsEdge = d?.dataset?.trim() ?? "";
-  const metEdge = d?.metrics_improvement?.trim() ?? "";
-  const metrics = d?.metrics?.filter(Boolean) ?? [];
-  const datasets = d?.datasets?.filter(Boolean) ?? [];
+  const rel = safeTrim(d?.relationshipType) || "EVOLVED_FROM";
+  const reason = safeTrim(d?.reason);
+  const at = safeTrim(d?.discovered_at);
+  const dsEdge = safeTrim(d?.dataset);
+  const metEdge = safeTrim(d?.metrics_improvement);
+  const metrics = Array.isArray(d?.metrics) ? d.metrics.filter(Boolean) : [];
+  const datasets = Array.isArray(d?.datasets)
+    ? d.datasets.filter(Boolean)
+    : [];
 
   return (
     <>

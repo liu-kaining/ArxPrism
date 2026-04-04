@@ -653,9 +653,15 @@ class ArxivRadar:
         # 4) 连续空行压缩（3 个以上换行 -> 2 个）
         out = re.sub(r"\n{3,}", "\n\n", out)
 
-        # 5) 极端长度兜底（约 7-8 万 token；极罕见）
-        if len(out) > 300_000:
-            out = out[:300_000] + "\n\n...[TEXT TRUNCATED DUE TO EXTREME LENGTH]..."
+        # 5) 商业版硬顶：限制送 LLM 的体量，防恶意超长正文刷 Token
+        _max_chars = 100_000
+        if len(out) > _max_chars:
+            logger.warning(
+                "Paper text truncated: %s chars -> %s (cap for cost control)",
+                len(out),
+                _max_chars,
+            )
+            out = out[:_max_chars] + "\n\n...[TEXT TRUNCATED DUE TO EXTREME LENGTH]..."
 
         return out
 

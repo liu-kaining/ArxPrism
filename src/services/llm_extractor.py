@@ -52,7 +52,7 @@ USER_PROMPT_TEMPLATE = """请基于 System Prompt 中的指令和严格的 JSON 
 </PAPER_TEXT>
 
 请严格按照以下 JSON Schema 输出：
-{{
+{
   "is_relevant_to_domain": true,
   "paper_id": "论文的 arXiv ID (例如: 2506.02009)",
   "title": "论文的英文原文标题",
@@ -319,7 +319,18 @@ class LLMExtractor:
         """
         logger.info(f"Starting LLM extraction for paper: {paper_id}")
 
-        user_prompt = USER_PROMPT_TEMPLATE.format(paper_text=paper_text)
+        if not (paper_text or "").strip():
+            logger.warning(
+                "Paper %s: empty paper_text after fetch/compress; skip extraction",
+                paper_id,
+            )
+            return None
+
+        # 防止正文伪造 </PAPER_TEXT> 等闭合标签劫持用户消息块（Prompt/XML 注入）
+        safe_paper_text = paper_text.replace("<PAPER_TEXT>", "").replace(
+            "</PAPER_TEXT>", ""
+        )
+        user_prompt = USER_PROMPT_TEMPLATE.replace("{paper_text}", safe_paper_text)
         last_error: str = "Unknown error"
         last_response: str = ""
 
@@ -452,8 +463,8 @@ class LLMExtractor:
         if not unique:
             return EntityResolutionResponse(clusters=[])
 
-        user_prompt = ENTITY_RESOLUTION_USER_TEMPLATE.format(
-            names_json=json.dumps(unique, ensure_ascii=False)
+        user_prompt = ENTITY_RESOLUTION_USER_TEMPLATE.replace(
+            "{names_json}", json.dumps(unique, ensure_ascii=False)
         )
         last_error = ""
         last_response = ""

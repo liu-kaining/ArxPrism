@@ -110,6 +110,9 @@ export default function TaskCreateForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading || previewLoading) {
+      return;
+    }
 
     const q = getEffectiveQuery();
     if (!q) {

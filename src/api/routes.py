@@ -16,7 +16,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.auth import require_user
+from src.api.auth import CurrentUser, require_user
+from src.api.task_routes import (
+    PIPELINE_TRIGGER_MAX_QUOTA_UNITS,
+    consume_n_task_quotas,
+    refund_n_task_quotas,
+)
 from src.database.neo4j_client import neo4j_client
 from src.models.schemas import (
     APIResponse,
@@ -34,7 +39,10 @@ router = APIRouter(
 
 
 @router.post("/pipeline/trigger", response_model=APIResponse, status_code=202)
-async def trigger_pipeline(request: PipelineTriggerRequest) -> APIResponse:
+async def trigger_pipeline(
+    request: PipelineTriggerRequest,
+    user: CurrentUser = Depends(require_user),
+) -> APIResponse:
     """
     触发论文萃取流水线.
 
@@ -52,11 +60,17 @@ async def trigger_pipeline(request: PipelineTriggerRequest) -> APIResponse:
     """
     logger.info(f"Pipeline trigger requested: query='{request.topic_query}'")
 
+    effective_max = min(request.max_results, PIPELINE_TRIGGER_MAX_QUOTA_UNITS)
+    try:
+        await consume_n_task_quotas(user, effective_max)
+    except HTTPException:
+        raise
+
     try:
         # Dispatch to Celery (自动回退到同步模式如果 Redis 不可用)
         result = await trigger_pipeline_task_async(
             topic_query=request.topic_query,
-            max_results=request.max_results
+            max_results=effective_max,
         )
 
         logger.info(f"Pipeline dispatched: {result}")
@@ -64,11 +78,19 @@ async def trigger_pipeline(request: PipelineTriggerRequest) -> APIResponse:
         return APIResponse(
             code=202,
             message="Pipeline triggered successfully",
-            data=result
+            data={
+                **result,
+                "max_results_capped_to": effective_max,
+                "quota_units_charged": effective_max,
+            },
         )
 
+    except HTTPException:
+        await refund_n_task_quotas(user.id, effective_max)
+        raise
     except Exception as e:
         logger.error(f"Failed to trigger pipeline: {e}")
+        await refund_n_task_quotas(user.id, effective_max)
         raise HTTPException(status_code=500, detail=f"Pipeline trigger failed: {str(e)}")
 
 

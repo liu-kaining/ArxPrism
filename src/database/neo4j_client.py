@@ -195,6 +195,26 @@ def _normalize_name(name: str) -> str:
     return normalized
 
 
+def _is_placeholder_entity_name(raw: Optional[str]) -> bool:
+    """
+    模型占位输出：大小写/下划线/空格变体均视为无效，禁止 MERGE 成归一化后的 junk 键
+    （例如 \"Not_Mentioned\" -> notmentioned）。
+    """
+    if raw is None or not isinstance(raw, str):
+        return True
+    compact = "".join(c for c in raw.lower() if c.isalnum())
+    return compact in (
+        "",
+        "notmentioned",
+        "na",
+        "none",
+        "unknown",
+        "null",
+        "tbd",
+        "undefined",
+    )
+
+
 class Neo4jClient:
     """异步图数据库客户端 (单例模式)."""
 
@@ -217,6 +237,7 @@ class Neo4jClient:
                 connection_acquisition_timeout=60,
             )
             await self._ensure_paper_embedding_vector_index()
+            await self._ensure_core_uniqueness_constraints()
             logger.info("Neo4j driver initialized successfully")
 
     async def _ensure_paper_embedding_vector_index(self) -> None:
@@ -242,6 +263,45 @@ class Neo4jClient:
                 _PAPER_VECTOR_INDEX,
                 e,
             )
+
+    async def _ensure_core_uniqueness_constraints(self) -> None:
+        """MERGE 键唯一约束：降低高并发下重复节点与死锁风险（Neo4j 5+）。"""
+        if self._driver is None:
+            return
+        statements = [
+            (
+                "method_name_unique",
+                "CREATE CONSTRAINT method_name_unique IF NOT EXISTS "
+                "FOR (m:Method) REQUIRE m.name IS UNIQUE",
+            ),
+            (
+                "paper_arxiv_id_unique",
+                "CREATE CONSTRAINT paper_arxiv_id_unique IF NOT EXISTS "
+                "FOR (p:Paper) REQUIRE p.arxiv_id IS UNIQUE",
+            ),
+            (
+                "task_name_unique",
+                "CREATE CONSTRAINT task_name_unique IF NOT EXISTS "
+                "FOR (t:Task) REQUIRE t.name IS UNIQUE",
+            ),
+        ]
+        for name, cypher in statements:
+            try:
+                async with self._driver.session() as session:
+                    await session.run(cypher)
+                logger.info("Neo4j uniqueness constraint %r ensured", name)
+            except Exception as e:
+                err = str(e).lower()
+                if (
+                    "already exists" in err
+                    or "equivalent" in err
+                    or "there already is" in err
+                ):
+                    logger.debug("Neo4j constraint %r skipped (already present): %s", name, e)
+                else:
+                    logger.warning(
+                        "Neo4j constraint %r could not be created: %s", name, e
+                    )
 
     async def close(self) -> None:
         """关闭 Neo4j 驱动连接."""
@@ -394,7 +454,7 @@ class Neo4jClient:
 
         normalized_task: Optional[str] = None
         task_name = extraction.task_name
-        if task_name and task_name != "NOT_MENTIONED":
+        if task_name and not _is_placeholder_entity_name(task_name):
             normalized_task = _normalize_name(task_name)
             if normalized_task:
                 logger.debug(f"MERGing Task: {task_name} -> normalized: {normalized_task}")
@@ -420,7 +480,7 @@ class Neo4jClient:
         method_name = extraction.proposed_method.name
         normalized_method: Optional[str] = None  # 初始化，避免未定义
 
-        if method_name and method_name != "NOT_MENTIONED":
+        if method_name and not _is_placeholder_entity_name(method_name):
             normalized_method = _normalize_name(method_name)
 
             # 跳过空归一化结果
@@ -747,26 +807,33 @@ class Neo4jClient:
                 if not target_key:
                     return {"nodes": [], "links": []}
 
-                eres = await session.run(
+                target = mrow["target"]
+
+                ares = await session.run(
                     """
                     MATCH (t:Method {name: $tk})
-                    OPTIONAL MATCH (t)-[:EVOLVED_FROM*1..3]->(a:Method)
-                    WITH t, collect(DISTINCT a) AS araw
-                    OPTIONAL MATCH (t)<-[:EVOLVED_FROM*1..3]-(d:Method)
-                    WITH t, araw, collect(DISTINCT d) AS draw
-                    RETURN t,
-                      [x IN araw WHERE x IS NOT NULL AND x <> t] AS ancestors,
-                      [x IN draw WHERE x IS NOT NULL AND x <> t] AS descendants
+                    MATCH p = (t)-[:EVOLVED_FROM*1..3]->(a:Method)
+                    WHERE a <> t
+                    WITH a, min(length(p)) AS depth
+                    RETURN a, depth
+                    ORDER BY depth, a.name
                     """,
                     tk=target_key,
                 )
-                erow = await eres.single()
-                if not erow:
-                    return {"nodes": [], "links": []}
+                ancestor_rows = await ares.data()
 
-                target = erow["t"]
-                ancestors = list(erow.get("ancestors") or [])
-                descendants = list(erow.get("descendants") or [])
+                dres = await session.run(
+                    """
+                    MATCH (t:Method {name: $tk})
+                    MATCH p = (t)<-[:EVOLVED_FROM*1..3]-(d:Method)
+                    WHERE d <> t
+                    WITH d, min(length(p)) AS depth
+                    RETURN d, depth
+                    ORDER BY depth, d.name
+                    """,
+                    tk=target_key,
+                )
+                descendant_rows = await dres.data()
 
                 nodes: List[Dict[str, Any]] = []
                 links: List[Dict[str, Any]] = []

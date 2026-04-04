@@ -113,11 +113,13 @@ celery.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-    task_soft_time_limit=300,  # 5 minutes per task
-    task_time_limit=600,  # 10 minutes hard limit
+    task_soft_time_limit=500,  # SoftTimeout 先到，给 IO/LLM 收尾机会
+    task_time_limit=600,  # Hard kill，防僵尸任务占满 Worker
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_connection_max_retries=10,
+    # PDF/长文本易推高常驻内存；子进程周期性退出，避免 Worker OOM
+    worker_max_tasks_per_child=50,
 )
 
 _celery_app: Optional[Celery] = None
@@ -396,6 +398,8 @@ def get_process_paper_task():
     max_retries=3,
     default_retry_delay=60,
     name="process_paper_task",
+    soft_time_limit=500,
+    time_limit=600,
 )
 def process_paper_task(self, paper_content: dict) -> dict:
     """
@@ -619,6 +623,9 @@ async def execute_task_pipeline_async(
     max_retries=3,
     default_retry_delay=60,
     name="run_task_pipeline_task",
+    # 整任务含多篇论文与 arXiv IO，单篇仍由 process_paper_task 的 500/600s 约束
+    soft_time_limit=2400,
+    time_limit=2700,
 )
 def run_task_pipeline_task(
     self,
