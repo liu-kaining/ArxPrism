@@ -132,7 +132,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - APP_ENV=production
       - LOG_LEVEL=INFO
-      - ARXIV_MAX_SCAN_PER_TASK=${ARXIV_MAX_SCAN_PER_TASK:-}
+      - ARXIV_MAX_SCAN_PER_TASK=${ARXIV_MAX_SCAN_PER_TASK:-500}
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
@@ -167,14 +167,18 @@ services:
         # Default: AWS Public ECR copy of official node (avoids broken/expired CN Hub mirrors, e.g. 163 / USTC).
         # To use Docker Hub directly: fix/remove registry-mirrors in Docker Engine, then set NODE_IMAGE=node:20-alpine in .env
         NODE_IMAGE: ${NODE_IMAGE:-public.ecr.aws/docker/library/node:20-alpine}
+        # Baked in at `next build`. Falls back to SUPABASE_* if NEXT_PUBLIC_* unset (same values as Dashboard → API).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-${SUPABASE_URL:-}}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}
     container_name: arxprism-frontend
     ports:
       - "3000:3000"  # Next.js
     environment:
       # Browser must reach the API on the host (not the Docker service name).
       - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-${SUPABASE_URL:-}}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}
       - NODE_ENV=production
       - APP_ENV=production
     depends_on:

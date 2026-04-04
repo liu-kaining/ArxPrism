@@ -10,7 +10,7 @@ Reference: ARCHITECTURE.md Section 6, CODE_REVIEW.md Section 2
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     arxiv_min_content_length: int = 500  # 最小内容长度阈值
     # 单次任务从 arXiv API 最多遍历多少条候选（分页累加）；前若干篇已在库时会继续向后翻直到凑满 max_results 或触顶
     arxiv_max_scan_per_task: int = 500
+
+    @field_validator("arxiv_max_scan_per_task", mode="before")
+    @classmethod
+    def _arxiv_scan_empty_to_default(cls, v: object) -> object:
+        """Docker / .env 常出现 ARXIV_MAX_SCAN_PER_TASK= 空串，须回退默认。"""
+        if v is None or v == "":
+            return 500
+        return v
 
     # PDF 仅作抓取解析时的临时目录（解析后即删）；须对运行用户可写
     pdf_storage_path: str = "/tmp/arxprism-papers"

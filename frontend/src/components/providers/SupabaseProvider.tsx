@@ -8,14 +8,17 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  createClient,
-  type AuthChangeEvent,
-  type Session,
-  type SupabaseClient,
-} from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session, SupabaseClient } from "@supabase/supabase-js";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
-type Ctx = { supabase: SupabaseClient; session: Session | null };
+type Ctx = {
+  supabase: SupabaseClient;
+  session: Session | null;
+  /** True after initial getSession (or immediately if Supabase env is missing). */
+  authReady: boolean;
+  /** False when NEXT_PUBLIC_SUPABASE_* are missing; OAuth must not run against placeholder.local. */
+  supabaseConfigured: boolean;
+};
 
 const SupabaseAppContext = createContext<Ctx | undefined>(undefined);
 
@@ -27,25 +30,26 @@ function getPublicEnv(): { url: string; anon: string } {
 
 export function SupabaseProvider({ children }: { children: ReactNode }) {
   const { url, anon } = getPublicEnv();
-  const supabase = useMemo(() => {
-    if (!url || !anon) {
-      return createClient("https://placeholder.local", "placeholder", {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-    }
-    return createClient(url, anon);
-  }, [url, anon]);
+  const supabaseConfigured = !!(url && anon);
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [url, anon]);
 
   const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    if (!url || !anon) return;
+    if (!url || !anon) {
+      setAuthReady(true);
+      return;
+    }
 
     let cancelled = false;
     void supabase.auth
       .getSession()
       .then(({ data }: { data: { session: Session | null } }) => {
-        if (!cancelled) setSession(data.session ?? null);
+        if (!cancelled) {
+          setSession(data.session ?? null);
+          setAuthReady(true);
+        }
       });
 
     const {
@@ -62,7 +66,10 @@ export function SupabaseProvider({ children }: { children: ReactNode }) {
     };
   }, [supabase, url, anon]);
 
-  const value = useMemo(() => ({ supabase, session }), [supabase, session]);
+  const value = useMemo(
+    () => ({ supabase, session, authReady, supabaseConfigured }),
+    [supabase, session, authReady, supabaseConfigured]
+  );
 
   return (
     <SupabaseAppContext.Provider value={value}>
@@ -86,4 +93,8 @@ export function useSession(): Session | null {
 
 export function useSupabaseClient(): SupabaseClient {
   return useSupabaseApp().supabase;
+}
+
+export function useSupabaseConfigured(): boolean {
+  return useSupabaseApp().supabaseConfigured;
 }

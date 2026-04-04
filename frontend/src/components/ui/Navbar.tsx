@@ -58,7 +58,10 @@ export default function Navbar() {
   }, [session]);
 
   const navItems = useMemo(() => {
-    if (!isAdmin) return baseNavItems;
+    const homeOnly = [baseNavItems[0]];
+    if (!session) return homeOnly;
+    if (!isAdmin)
+      return baseNavItems;
     return [
       ...baseNavItems,
       {
@@ -67,7 +70,7 @@ export default function Navbar() {
         icon: ShieldAlert,
       },
     ];
-  }, [isAdmin]);
+  }, [isAdmin, session]);
 
   const onSignOut = async () => {
     await supabase.auth.signOut();

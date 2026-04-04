@@ -54,6 +54,7 @@ export default function HomePage() {
           <div className="flex flex-wrap gap-3 pt-2">
             <Link
               href="/papers"
+              prefetch={false}
               className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-700 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:opacity-95"
             >
               进入论文列表
@@ -61,6 +62,7 @@ export default function HomePage() {
             </Link>
             <Link
               href="/tasks"
+              prefetch={false}
               className="inline-flex items-center gap-2 rounded-xl border border-amber-300/90 bg-white/90 px-5 py-2.5 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-50"
             >
               创建抓取任务
@@ -84,6 +86,7 @@ export default function HomePage() {
             <li key={href}>
               <Link
                 href={href}
+                prefetch={false}
                 className="group flex h-full flex-col rounded-2xl border border-border bg-card p-5 shadow-sm transition hover:border-amber-300/80 hover:shadow-md"
               >
                 <div className="mb-3 flex items-start justify-between gap-3">

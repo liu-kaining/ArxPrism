@@ -1,60 +1,57 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
-import { useSupabaseClient } from "@/components/providers/SupabaseProvider";
+import {
+  useSupabaseClient,
+  useSupabaseConfigured,
+} from "@/components/providers/SupabaseProvider";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { ArrowLeft, Github, LogIn } from "lucide-react";
 
 export default function LoginClient() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") || "/";
 
   const supabase = useSupabaseClient();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const supabaseConfigured = useSupabaseConfigured();
   const [loading, setLoading] = useState(false);
 
-  const onEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (error) throw error;
-      toast.success("登录成功");
-      router.replace(next);
-      router.refresh();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(msg || "登录失败");
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    const msg = searchParams.get("error");
+    if (msg) toast.error(msg);
+  }, [searchParams]);
 
   const onGithub = async () => {
+    if (!supabaseConfigured) {
+      toast.error("请先配置 NEXT_PUBLIC_SUPABASE_URL 与 NEXT_PUBLIC_SUPABASE_ANON_KEY");
+      return;
+    }
     setLoading(true);
+    let leaving = false;
     try {
       const origin = window.location.origin;
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "github",
         options: {
           redirectTo: `${origin}/auth/callback?next=${encodeURIComponent(next)}`,
         },
       });
       if (error) throw error;
+      if (data?.url) {
+        leaving = true;
+        window.location.assign(data.url);
+        return;
+      }
+      toast.error("未能获取 GitHub 授权地址，请检查 Supabase 与 GitHub 应用配置");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(msg || "GitHub 登录失败");
-      setLoading(false);
+    } finally {
+      if (!leaving) setLoading(false);
     }
   };
 
@@ -78,61 +75,37 @@ export default function LoginClient() {
             登录 ArxPrism
           </CardTitle>
           <p className="text-sm text-stone-600">
-            使用 Supabase 账号登录后可访问论文库、任务与图谱 API。
+            使用 GitHub 授权登录。请在 Supabase 控制台启用 GitHub 提供商并配置回调 URL。
           </p>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <form onSubmit={(e) => void onEmailLogin(e)} className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-stone-800">邮箱</label>
-              <Input
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="h-11 rounded-xl"
-                placeholder="you@example.com"
-              />
+        <CardContent className="space-y-4">
+          {!supabaseConfigured ? (
+            <div className="rounded-xl border border-amber-300/80 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              <p className="font-medium">未配置 Supabase 前端环境变量</p>
+              <p className="mt-2 text-amber-900/90">
+                在 <code className="rounded bg-white/80 px-1">frontend/.env.local</code>{" "}
+                或 Docker 的 frontend 服务里设置{" "}
+                <code className="rounded bg-white/80 px-1">
+                  NEXT_PUBLIC_SUPABASE_URL
+                </code>{" "}
+                与{" "}
+                <code className="rounded bg-white/80 px-1">
+                  NEXT_PUBLIC_SUPABASE_ANON_KEY
+                </code>
+                （与 Supabase 项目 Dashboard 一致）。保存后需重新执行{" "}
+                <code className="rounded bg-white/80 px-1">next dev</code>{" "}
+                或重建前端镜像。
+              </p>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-stone-800">密码</label>
-              <Input
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="h-11 rounded-xl"
-              />
-            </div>
-            <Button
-              type="submit"
-              disabled={loading}
-              className="h-11 w-full rounded-xl bg-amber-700 font-semibold text-white hover:bg-amber-800"
-            >
-              {loading ? "登录中…" : "邮箱登录"}
-            </Button>
-          </form>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-stone-200" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-stone-500">或</span>
-            </div>
-          </div>
-
+          ) : null}
           <Button
             type="button"
-            variant="outline"
-            disabled={loading}
+            disabled={loading || !supabaseConfigured}
             onClick={() => void onGithub()}
-            className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border-stone-300 font-semibold"
+            className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-stone-900 font-semibold text-white hover:bg-stone-800"
           >
             <Github className="h-5 w-5" />
-            GitHub 登录（需在 Supabase 控制台启用）
+            {loading ? "跳转中…" : "使用 GitHub 登录"}
           </Button>
         </CardContent>
       </Card>

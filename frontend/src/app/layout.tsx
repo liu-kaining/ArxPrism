@@ -4,6 +4,7 @@ import "./globals.css";
 import "@xyflow/react/dist/style.css";
 import { Toaster } from "react-hot-toast";
 import Navbar from "@/components/ui/Navbar";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { SupabaseProvider } from "@/components/providers/SupabaseProvider";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -27,7 +28,7 @@ export default function RootLayout({
           <div className="flex min-h-screen flex-col">
             <Navbar />
             <main className="container mx-auto flex-1 px-4 py-6">
-              {children}
+              <RequireAuth>{children}</RequireAuth>
             </main>
           </div>
         </SupabaseProvider>
