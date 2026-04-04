@@ -30,6 +30,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_DEV_DOCS = settings.environment.strip().lower() == "development"
+_cors_allow_origins = [
+    o.strip()
+    for o in (settings.cors_origins or "").split(",")
+    if o.strip()
+]
+if not _cors_allow_origins:
+    _cors_allow_origins = ["http://localhost:3000"]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -93,14 +102,14 @@ app = FastAPI(
     ),
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if _DEV_DOCS else None,
+    redoc_url="/redoc" if _DEV_DOCS else None,
 )
 
-# CORS middleware
+# CORS：显式 Origin 列表，与 allow_credentials 共存时不得使用 "*"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -123,9 +132,11 @@ async def health_check():
 @app.get("/")
 async def root():
     """Root endpoint with service info."""
-    return {
+    payload = {
         "service": "ArxPrism",
         "version": "0.1.0",
         "description": "Academic knowledge graph extraction pipeline",
-        "docs": "/docs"
     }
+    if _DEV_DOCS:
+        payload["docs"] = "/docs"
+    return payload

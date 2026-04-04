@@ -71,11 +71,14 @@ services:
       - LLM_EMBEDDING_BASE_URL=${LLM_EMBEDDING_BASE_URL:-}
       - LLM_EMBEDDING_API_KEY=${LLM_EMBEDDING_API_KEY:-}
       - LLM_EMBEDDING_MODEL=${LLM_EMBEDDING_MODEL:-}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=password
       - REDIS_URL=redis://redis:6379/0
       - APP_ENV=production
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - LOG_LEVEL=INFO
       - ADMIN_RESET_TOKEN=${ADMIN_RESET_TOKEN:-}
       - SUPABASE_URL=${SUPABASE_URL:-}
@@ -122,6 +125,7 @@ services:
       - LLM_EMBEDDING_BASE_URL=${LLM_EMBEDDING_BASE_URL:-}
       - LLM_EMBEDDING_API_KEY=${LLM_EMBEDDING_API_KEY:-}
       - LLM_EMBEDDING_MODEL=${LLM_EMBEDDING_MODEL:-}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-8192}
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=password

@@ -17,7 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.auth import CurrentUser, require_user
-from src.api.task_routes import (
+from src.api.deps_quota import (
     PIPELINE_TRIGGER_MAX_QUOTA_UNITS,
     consume_n_task_quotas,
     refund_n_task_quotas,

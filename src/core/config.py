@@ -7,10 +7,10 @@ ArxPrism Configuration Module
 Reference: ARCHITECTURE.md Section 6, CODE_REVIEW.md Section 2
 """
 
-import os
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # 应用设置
     app_env: str = "development"
     log_level: str = "INFO"
+    # development 时开启 /docs、/redoc；生产请设为 production
+    environment: str = Field(default="development")
+    # 逗号分隔的浏览器 Origin，禁止与 credentials 搭配使用 "*"
+    cors_origins: str = Field(default="http://localhost:3000")
 
     # 一键清空数据：POST /api/v1/admin/clear-all-data 需在请求头携带
     # X-ArxPrism-Admin-Token: <与下方一致>；未设置则接口返回 403（防止误暴露）

@@ -113,14 +113,14 @@ class KnowledgeGraphNodes(BaseModel):
     def _cap_lineages_count(cls, v: object) -> object:
         if isinstance(v, list):
             return v[:64]
-        return v
+        return []
 
     @field_validator("comparisons", mode="before")
     @classmethod
     def _cap_comparisons_count(cls, v: object) -> object:
         if isinstance(v, list):
             return v[:128]
-        return v
+        return []
 
 
 class TriageResponse(BaseModel):
@@ -263,7 +263,7 @@ class EntityResolutionResponse(BaseModel):
     def _cap_clusters_count(cls, v: object) -> object:
         if isinstance(v, list):
             return v[:256]
-        return v
+        return []
 
 
 # =============================================================================
