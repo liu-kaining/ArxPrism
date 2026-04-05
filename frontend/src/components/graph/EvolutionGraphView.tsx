@@ -134,11 +134,11 @@ function EvolutionGraphInner({
         </ReactFlow>
       </div>
       <div
-        className="pointer-events-none absolute bottom-2 left-2 z-10 max-w-[min(92%,22rem)] rounded-md border border-stone-400/40 bg-stone-950/75 px-2.5 py-1.5 font-mono text-[10px] leading-snug text-stone-200 shadow-sm backdrop-blur-sm"
+        className="pointer-events-none absolute bottom-2 left-2 z-10 max-w-[min(92%,22rem)] rounded-lg border border-amber-200/90 bg-[#faf7f2]/95 px-2.5 py-1.5 font-mono text-[10px] leading-snug text-stone-700 shadow-sm backdrop-blur-sm"
         aria-hidden
       >
         <div>
-          <span className="text-violet-300/90">EVOLVED_FROM</span>
+          <span className="font-semibold text-violet-800">EVOLVED_FROM</span>
           <span className="text-stone-400"> · </span>
           箭头方向：技术血脉传承与进化（子 → 祖）
         </div>

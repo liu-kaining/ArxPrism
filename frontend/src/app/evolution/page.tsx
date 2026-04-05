@@ -302,23 +302,23 @@ function EvolutionPageContent() {
           <CardContent>
             {/* Stats */}
             <div className="grid grid-cols-3 gap-4 mb-6">
-              <div className="p-4 rounded-lg bg-primary/10 text-center">
-                <p className="text-2xl font-bold text-primary">
+              <div className="rounded-lg border border-amber-200/90 bg-amber-50/90 p-4 text-center">
+                <p className="text-2xl font-bold text-amber-950">
                   {nodes.filter((n) => n.generation === 0).length}
                 </p>
-                <p className="text-sm text-muted-foreground">目标方法</p>
+                <p className="text-sm text-stone-600">目标方法</p>
               </div>
-              <div className="p-4 rounded-lg bg-secondary text-center">
-                <p className="text-2xl font-bold">
+              <div className="rounded-lg border border-sky-200/90 bg-sky-50/90 p-4 text-center">
+                <p className="text-2xl font-bold text-sky-950">
                   {nodes.filter((n) => n.generation < 0).length}
                 </p>
-                <p className="text-sm text-muted-foreground">祖先节点</p>
+                <p className="text-sm text-stone-600">祖先节点</p>
               </div>
-              <div className="p-4 rounded-lg bg-accent text-center">
-                <p className="text-2xl font-bold">
+              <div className="rounded-lg border border-emerald-200/90 bg-emerald-50/90 p-4 text-center">
+                <p className="text-2xl font-bold text-emerald-950">
                   {nodes.filter((n) => n.generation > 0).length}
                 </p>
-                <p className="text-sm text-muted-foreground">后代节点</p>
+                <p className="text-sm text-stone-600">后代节点</p>
               </div>
             </div>
 
