@@ -171,7 +171,13 @@ async def get_system_status() -> APIResponse:
     recent_total = 0
     try:
         _, recent_total = await task_manager.list_recent_tasks_page(
-            offset=0, limit=1, status=None, active_only=False, terminal_only=False
+            offset=0,
+            limit=1,
+            status=None,
+            active_only=False,
+            terminal_only=False,
+            list_user_id="",
+            scope_global=True,
         )
     except Exception as e:
         logger.warning("system-status tasks: %s", e)

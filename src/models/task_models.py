@@ -78,6 +78,10 @@ class Task(BaseModel):
     query: str = Field(description="arXiv 搜索查询")
     domain_preset: str = Field(default="sre", description="领域预设")
     max_results: int = Field(default=10, description="最大论文数")
+    owner_user_id: Optional[str] = Field(
+        default=None,
+        description="创建者 Supabase user id（JWT sub）；旧任务可能为空",
+    )
 
     # 进度信息
     progress: TaskProgress = Field(default_factory=TaskProgress, description="进度信息")
@@ -169,6 +173,7 @@ class TaskSummary(BaseModel):
     created_at: datetime
     updated_at: datetime
     completion_summary: Optional[str] = None
+    owner_user_id: Optional[str] = None
 
 
 # =============================================================================

@@ -103,6 +103,14 @@ async def process_single_paper(
     # Step 2: 领域相关性检查
     if not extraction.is_relevant_to_domain:
         print_warning("论文不属于 SRE/云原生/AIOps 领域，已跳过")
+        try:
+            await neo4j_client.ensure_ingest_tombstone(
+                paper.arxiv_id,
+                "domain_gatekeeper",
+                paper.title or "",
+            )
+        except Exception as e:
+            logger.warning("ingest tombstone failed (non-fatal): %s", e)
         return {"status": "skipped", "paper_id": paper.arxiv_id, "reason": "domain_not_relevant"}
 
     if extraction.extraction_data is None:

@@ -167,8 +167,9 @@ class ArxivRadar:
 
         实现完整的流水线:
         1. 构建优化查询 (基于领域预设)
-        2. 搜索 arXiv
-        3. 幂等性检查 (检查是否已存在于 Neo4j)
+        2. 搜索 arXiv（按投稿时间降序；arxiv 客户端会分页拉取直至 scan_cap 条候选）
+        3. 幂等性检查：正式 :Paper 或 :ArxivIngestTombstone（曾分诊/领域拒收）均跳过，
+           从而在候选头部已被「占满」时继续向后扫描，而不是每轮都卡在相同 ID
         4. 下载 PDF 并解析 (优先)
         5. 内容长度校验
         6. 返回有效论文列表
@@ -207,7 +208,8 @@ class ArxivRadar:
             max(100, max_results * 25),
         )
         logger.info(
-            "arXiv scan: want_up_to=%s candidates_cap=%s (pagination until enough new or cap)",
+            "arXiv scan: want_up_to=%s candidates_cap=%s "
+            "(API 按页拉取直至 cap；同一任务内从最新往旧扫，跳过已在库或墓碑 ID 直至凑满或触顶)",
             max_results,
             scan_cap,
         )
@@ -334,6 +336,18 @@ class ArxivRadar:
             is_relevant = True
         if not is_relevant:
             logger.info("Triage rejected: %s", arxiv_id)
+            try:
+                await neo4j_client.ensure_ingest_tombstone(
+                    arxiv_id,
+                    "triage_rejected",
+                    (paper.title or "")[:512],
+                )
+            except Exception as ex:
+                logger.warning(
+                    "Tombstone after triage failed (non-fatal) %s: %s",
+                    arxiv_id,
+                    ex,
+                )
             return None
 
         # Step 3: Rate limiting (arXiv 君子协定) — 仅在即将发起 HTTP 请求时等待

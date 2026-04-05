@@ -152,6 +152,28 @@ export default function PaperDetailPage() {
               arXiv:{arxivId}
             </span>
           </div>
+          {(paper.contributors?.length ?? 0) > 0 ? (
+            <p className="text-xs leading-relaxed text-stone-500">
+              <span className="font-medium text-stone-700">入库贡献</span>
+              {paper.contributors!.map((c, i) => (
+                <span key={`${c.user_id}-${c.redis_task_id}-${i}`}>
+                  {i > 0 ? " · " : " "}
+                  用户 <span className="font-mono text-stone-600">{c.user_id.slice(0, 8)}…</span>
+                  {c.redis_task_id ? (
+                    <>
+                      ，任务{" "}
+                      <Link
+                        href={`/tasks/${encodeURIComponent(c.redis_task_id)}`}
+                        className="font-mono text-amber-900 underline-offset-2 hover:underline"
+                      >
+                        {c.redis_task_id.slice(0, 8)}…
+                      </Link>
+                    </>
+                  ) : null}
+                </span>
+              ))}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -316,79 +338,52 @@ export default function PaperDetailPage() {
             </CardContent>
           </Card>
 
-          {paper.summary?.trim() ? (
-            <Card className={shell}>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 text-violet-900">
-                    <FileText className="h-4 w-4" />
+          <Card className={shell}>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold text-stone-900">
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 text-violet-900">
+                  <FileText className="h-4 w-4" />
+                </span>
+                摘要（专业中译）
+              </CardTitle>
+              <p className="text-xs text-stone-500">
+                以下为入库时由大模型根据 arXiv 英文摘要生成的简体中文译文，术语与信息力求完整；请以左侧
+                PDF 与 arXiv 原文为最终依据核对。
+              </p>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-3.5">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-amber-900/80">
+                    中译正文
                   </span>
-                  arXiv 摘要
-                </CardTitle>
-                <p className="text-xs text-stone-500">
-                  左侧为 arXiv
-                  原文；右侧为入库时由大模型生成的专业中译，建议与 PDF
-                  对照核验。译文力求术语准确、信息完整，仍以原文为准。
-                </p>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
-                  <div className="rounded-xl border border-stone-200/90 bg-stone-50/60 p-3.5">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                        原文
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 shrink-0 px-2 text-xs text-stone-600"
-                        onClick={() =>
-                          copyText(paper.summary!.trim(), "英文摘要")
-                        }
-                      >
-                        <Copy className="mr-1 h-3 w-3" />
-                        复制
-                      </Button>
-                    </div>
-                    <p className="text-sm leading-relaxed text-stone-700 whitespace-pre-wrap">
-                      {paper.summary.trim()}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-3.5">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-amber-900/80">
-                        专业译文
-                      </span>
-                      {paper.summary_zh?.trim() ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 shrink-0 px-2 text-xs text-amber-900/80"
-                          onClick={() =>
-                            copyText(paper.summary_zh!.trim(), "中文摘要")
-                          }
-                        >
-                          <Copy className="mr-1 h-3 w-3" />
-                          复制
-                        </Button>
-                      ) : null}
-                    </div>
-                    {paper.summary_zh?.trim() ? (
-                      <p className="text-sm leading-relaxed text-stone-800 whitespace-pre-wrap">
-                        {paper.summary_zh.trim()}
-                      </p>
-                    ) : (
-                      <p className="text-sm leading-relaxed text-stone-500 italic">
-                        暂无译文。若本篇在翻译功能上线前已入库，请对相应主题重新发起一次抓取与处理以生成中译。
-                      </p>
-                    )}
-                  </div>
+                  {paper.summary_zh?.trim() ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-xs text-amber-900/80"
+                      onClick={() =>
+                        copyText(paper.summary_zh!.trim(), "中文摘要")
+                      }
+                    >
+                      <Copy className="mr-1 h-3 w-3" />
+                      复制
+                    </Button>
+                  ) : null}
                 </div>
-              </CardContent>
-            </Card>
-          ) : null}
+                {paper.summary_zh?.trim() ? (
+                  <p className="text-sm leading-relaxed text-stone-800 whitespace-pre-wrap">
+                    {paper.summary_zh.trim()}
+                  </p>
+                ) : (
+                  <p className="text-sm leading-relaxed text-stone-500 italic">
+                    暂无中译。请对相应检索主题重新发起一次抓取与处理，流水线会调用大模型生成摘要译文。
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {paper.reasoning_process?.trim() ? (
             <Card className={shell}>

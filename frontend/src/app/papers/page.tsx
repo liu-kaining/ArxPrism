@@ -603,6 +603,13 @@ function PapersPageInner() {
                       </span>
                     </div>
 
+                    {(paper.contributors?.length ?? 0) > 0 ? (
+                      <p className="text-[11px] leading-snug text-muted-foreground">
+                        <span className="font-medium text-stone-600">入库贡献</span>{" "}
+                        {paper.contributors!.length} 条（用户与抓取任务已记入图谱）
+                      </p>
+                    ) : null}
+
                     {paper.core_problem ? (
                       <p className="line-clamp-3 text-sm italic leading-relaxed text-muted-foreground">
                         {paper.core_problem}

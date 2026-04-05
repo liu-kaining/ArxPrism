@@ -79,22 +79,39 @@ def _decode_supabase_jwt_hs256(token: str, secret: str) -> dict:
 
 
 def _decode_supabase_jwt_jwks(token: str, alg: str) -> dict:
-    """Supabase 新版 JWT 多为 RS256/ES256，公钥在 {SUPABASE_URL}/auth/v1/certs。"""
+    """Supabase 新版 JWT 多为 RS256/ES256；JWKS 在 /auth/v1/certs（部分项目需带 anon key，否则 401）。"""
     base = (settings.supabase_url or "").strip().rstrip("/")
     if not base:
         raise HTTPException(
             status_code=503,
             detail="Server misconfigured: SUPABASE_URL is empty (required for JWKS / asymmetric JWT)",
         )
-    jwks_url = f"{base}/auth/v1/certs"
-    try:
-        jwks_client = PyJWKClient(jwks_url)
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-    except Exception as e:
+    anon = (settings.supabase_anon_key or "").strip()
+    if not anon:
         raise HTTPException(
             status_code=503,
-            detail=f"Could not load Supabase JWKS from {jwks_url}: {e}",
-        ) from e
+            detail="Server misconfigured: SUPABASE_ANON_KEY is empty (required to fetch /auth/v1/certs for RS256/ES256)",
+        )
+    jwks_headers = {
+        "apikey": anon,
+        "Authorization": f"Bearer {anon}",
+    }
+    jwks_url = f"{base}/auth/v1/certs"
+    alt_url = f"{base}/auth/v1/.well-known/jwks.json"
+    last_err: Optional[Exception] = None
+    signing_key = None
+    for url in (jwks_url, alt_url):
+        try:
+            client = PyJWKClient(url, headers=jwks_headers)
+            signing_key = client.get_signing_key_from_jwt(token)
+            break
+        except Exception as e:
+            last_err = e
+    if signing_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not load Supabase JWKS (tried /auth/v1/certs and /.well-known/jwks.json): {last_err}",
+        ) from last_err
     try:
         return pyjwt.decode(
             token,

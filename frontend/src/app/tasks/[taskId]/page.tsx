@@ -247,6 +247,7 @@ export default function TaskDetailPage() {
                 const resultStatus = paperResultStatusUi[result.status];
 
                 const ResultIcon = resultStatus.icon;
+                const canOpenInLibrary = result.status === "success";
 
                 return (
                   <div
@@ -266,11 +267,24 @@ export default function TaskDetailPage() {
                       {result.method_name && (
                         <span className="text-sm text-primary">{result.method_name}</span>
                       )}
-                      <Link href={`/papers/${result.arxiv_id}`}>
-                        <Button variant="ghost" size="icon">
+                      {canOpenInLibrary ? (
+                        <Link href={`/papers/${result.arxiv_id}`}>
+                          <Button variant="ghost" size="icon" title="在本库中打开详情">
+                            <BookOpen className="w-4 h-4" />
+                          </Button>
+                        </Link>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          disabled
+                          className="opacity-40"
+                          title="仅成功入库的论文可打开详情；跳过或失败时本库可能无此篇"
+                        >
                           <BookOpen className="w-4 h-4" />
                         </Button>
-                      </Link>
+                      )}
                     </div>
                   </div>
                 );

@@ -295,6 +295,16 @@ class Neo4jClient:
                 "CREATE CONSTRAINT task_name_unique IF NOT EXISTS "
                 "FOR (t:Task) REQUIRE t.name IS UNIQUE",
             ),
+            (
+                "contributor_account_id_unique",
+                "CREATE CONSTRAINT contributor_account_id_unique IF NOT EXISTS "
+                "FOR (c:ContributorAccount) REQUIRE c.id IS UNIQUE",
+            ),
+            (
+                "arxiv_ingest_tombstone_arxiv_id_unique",
+                "CREATE CONSTRAINT arxiv_ingest_tombstone_arxiv_id_unique IF NOT EXISTS "
+                "FOR (t:ArxivIngestTombstone) REQUIRE t.arxiv_id IS UNIQUE",
+            ),
         ]
         for name, cypher in statements:
             try:
@@ -366,6 +376,38 @@ class Neo4jClient:
             logger.error("Failed to upsert paper %s: %s", paper_id, e)
             return False
 
+    async def record_paper_fetch_contribution(
+        self,
+        arxiv_id: str,
+        owner_user_id: str,
+        redis_task_id: str,
+    ) -> None:
+        """
+        入库成功后记录贡献者：(:Paper)-[:FETCHED_BY {redis_task_id, ingested_at}]
+        ->(:ContributorAccount {id})。
+        """
+        aid = (arxiv_id or "").strip()
+        uid = (owner_user_id or "").strip()
+        tid = (redis_task_id or "").strip()
+        if not aid or not uid or not tid:
+            return
+        if self._driver is None:
+            await self.connect()
+        cypher = """
+        MERGE (c:ContributorAccount {id: $user_id})
+        WITH c
+        MATCH (p:Paper {arxiv_id: $arxiv_id})
+        MERGE (p)-[r:FETCHED_BY {redis_task_id: $redis_task_id}]->(c)
+        SET r.ingested_at = datetime()
+        """
+        async with self._driver.session() as session:
+            await session.run(
+                cypher,
+                user_id=uid,
+                arxiv_id=aid,
+                redis_task_id=tid,
+            )
+
     async def _upsert_transaction(
         self,
         tx: Any,
@@ -379,6 +421,10 @@ class Neo4jClient:
         防线4: [:IMPROVES_UPON] 边写入 discovered_at、dataset、metrics_improvement
         """
         paper_id = data.paper_id
+        await tx.run(
+            "MATCH (t:ArxivIngestTombstone {arxiv_id: $arxiv_id}) DETACH DELETE t",
+            arxiv_id=paper_id,
+        )
         extraction = data.extraction_data
         published_date = data.publication_date
         core_problem = (
@@ -713,27 +759,57 @@ class Neo4jClient:
 
         logger.debug("Completed upsert for paper: %s", paper_id)
 
+    async def ensure_ingest_tombstone(
+        self,
+        arxiv_id: str,
+        reason: str,
+        title: str = "",
+    ) -> None:
+        """
+        标记某 arXiv ID 已处理但**未**形成正式 Paper 节点（分诊拒收 / 领域门闸跳过等），
+        避免下次抓取仍从「最新排序」头部反复命中同一批 ID。
+
+        若已存在 :Paper，则不写入墓碑（以正式入库为准）。
+        """
+        aid = (arxiv_id or "").strip()
+        if not aid:
+            return
+        rsn = (reason or "unknown")[:128]
+        ttl = (title or "")[:512]
+        if self._driver is None:
+            await self.connect()
+        cypher = """
+        OPTIONAL MATCH (p:Paper {arxiv_id: $id})
+        WITH p
+        WHERE p IS NULL
+        MERGE (t:ArxivIngestTombstone {arxiv_id: $id})
+        ON CREATE SET
+            t.reason = $reason,
+            t.title = $title,
+            t.created_at = datetime()
+        """
+        async with self._driver.session() as session:
+            await session.run(cypher, id=aid, reason=rsn, title=ttl)
+
     async def check_paper_exists(self, arxiv_id: str) -> bool:
         """
-        检查论文是否已存在于数据库.
-
-        Args:
-            arxiv_id: arXiv ID
-
-        Returns:
-            True if exists, False otherwise
+        是否应跳过抓取：已存在正式 :Paper，或已有 :ArxivIngestTombstone（曾拒收/跳过）。
         """
         try:
             if self._driver is None:
                 await self.connect()
             async with self._driver.session() as session:
                 result = await session.run(
-                    "MATCH (p:Paper {arxiv_id: $arxiv_id}) RETURN p",
-                    arxiv_id=arxiv_id
+                    """
+                    OPTIONAL MATCH (p:Paper {arxiv_id: $arxiv_id})
+                    OPTIONAL MATCH (t:ArxivIngestTombstone {arxiv_id: $arxiv_id})
+                    RETURN (p IS NOT NULL OR t IS NOT NULL) AS blocked
+                    """,
+                    arxiv_id=arxiv_id,
                 )
                 record = await result.single()
-                exists = record is not None
-            logger.debug("Paper %s exists: %s", arxiv_id, exists)
+                exists = bool(record and record.get("blocked"))
+            logger.debug("Paper %s fetch-skip (paper or tombstone): %s", arxiv_id, exists)
             return exists
         except Exception as e:
             logger.error("Error checking paper existence: %s", e)
@@ -1123,6 +1199,7 @@ class Neo4jClient:
         OPTIONAL MATCH (p)-[:EVALUATED_ON]->(d:Dataset)
         OPTIONAL MATCH (p)-[:MEASURES]->(mt:Metric)
         OPTIONAL MATCH (m)-[imp:IMPROVES_UPON]->(baseline:Method)
+        OPTIONAL MATCH (p)-[cfb:FETCHED_BY]->(cacc:ContributorAccount)
         WITH p,
              collect(DISTINCT coalesce(m.original_name, m.name)) AS methods,
              collect(DISTINCT coalesce(a.original_name, a.name)) AS authors,
@@ -1133,7 +1210,12 @@ class Neo4jClient:
                baseline: coalesce(baseline.original_name, baseline.name),
                dataset: imp.dataset,
                metrics_improvement: imp.metrics_improvement
-             } END) AS comparison_rows
+             } END) AS comparison_rows,
+             collect(DISTINCT CASE WHEN cacc IS NOT NULL THEN {
+               user_id: cacc.id,
+               redis_task_id: cfb.redis_task_id,
+               ingested_at: toString(cfb.ingested_at)
+             } END) AS contributors
         RETURN
           p.arxiv_id AS arxiv_id,
           p.title AS title,
@@ -1144,7 +1226,8 @@ class Neo4jClient:
           authors AS authors,
           datasets AS datasets,
           metrics AS metrics,
-          comparison_rows AS comparison_rows
+          comparison_rows AS comparison_rows,
+          contributors AS contributors
         """
 
         try:
@@ -1228,6 +1311,16 @@ class Neo4jClient:
                 row["experiment_comparisons"] = self._normalize_comparison_rows(
                     row.pop("comparison_rows", None)
                 )
+                raw_c = row.pop("contributors", None) or []
+                row["contributors"] = [
+                    {
+                        "user_id": str(c.get("user_id") or ""),
+                        "redis_task_id": str(c.get("redis_task_id") or ""),
+                        "ingested_at": str(c.get("ingested_at") or ""),
+                    }
+                    for c in raw_c
+                    if isinstance(c, dict) and (c.get("user_id") or "").strip()
+                ]
             return rows
         except Exception as e:
             logger.error("Failed to search papers: %s", e)
@@ -1503,6 +1596,7 @@ class Neo4jClient:
         OPTIONAL MATCH (p)-[:MEASURES]->(mt:Metric)
         OPTIONAL MATCH (p)-[:ADDRESSES]->(t:Task)
         OPTIONAL MATCH (m)-[imp:IMPROVES_UPON]->(baseline:Method)
+        OPTIONAL MATCH (p)-[fb:FETCHED_BY]->(cont:ContributorAccount)
 
         RETURN
           p.arxiv_id AS arxiv_id,
@@ -1529,7 +1623,12 @@ class Neo4jClient:
             baseline: coalesce(baseline.original_name, baseline.name),
             dataset: imp.dataset,
             metrics_improvement: imp.metrics_improvement
-          } END) AS comparison_rows
+          } END) AS comparison_rows,
+          collect(DISTINCT CASE WHEN cont IS NOT NULL THEN {
+            user_id: cont.id,
+            redis_task_id: fb.redis_task_id,
+            ingested_at: toString(fb.ingested_at)
+          } END) AS contributors
         """
 
         try:
@@ -1562,6 +1661,16 @@ class Neo4jClient:
             experiment_comparisons = self._normalize_comparison_rows(
                 row.get("comparison_rows")
             )
+            raw_contrib = row.get("contributors") or []
+            contributors = [
+                {
+                    "user_id": str(c.get("user_id") or ""),
+                    "redis_task_id": str(c.get("redis_task_id") or ""),
+                    "ingested_at": str(c.get("ingested_at") or ""),
+                }
+                for c in raw_contrib
+                if isinstance(c, dict) and (c.get("user_id") or "").strip()
+            ]
 
             return {
                 "arxiv_id": row["arxiv_id"],
@@ -1572,6 +1681,7 @@ class Neo4jClient:
                 "summary_zh": row.get("summary_zh") or "",
                 "reasoning_process": row.get("reasoning_process") or "",
                 "authors": author_list,
+                "contributors": contributors,
                 "proposed_method": method_names[0] if method_names else "",
                 "proposed_method_name_key": proposed_method_key,
                 "proposed_method_description": proposed_method_description,

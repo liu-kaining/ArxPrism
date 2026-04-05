@@ -29,6 +29,31 @@ from src.models.schemas import (
 
 logger = logging.getLogger(__name__)
 
+
+def _unwrap_llm_json_content(raw: Optional[str]) -> str:
+    """
+    部分兼容网关在 response_format=json_object 时仍返回 Markdown 代码块
+   （如 ```json ... ```），Pydantic 的 model_validate_json 无法直接解析。
+    """
+    if raw is None:
+        return ""
+    s = raw.strip()
+    if not s:
+        return ""
+    if s.startswith("```"):
+        nl = s.find("\n")
+        if nl != -1:
+            s = s[nl + 1 :]
+        else:
+            s = s.lstrip("`")
+    s = s.strip()
+    if s.endswith("```"):
+        i = s.rfind("```")
+        if i != -1:
+            s = s[:i].rstrip()
+    return s.strip()
+
+
 # =============================================================================
 # System Prompt (from PROMPT_ENGINEERING.md Section 1)
 # =============================================================================
@@ -194,7 +219,9 @@ class LLMExtractor:
                 raw = resp.choices[0].message.content
                 if not raw:
                     raise ValueError("empty triage response")
-                parsed = TriageResponse.model_validate_json(raw)
+                parsed = TriageResponse.model_validate_json(
+                    _unwrap_llm_json_content(raw)
+                )
                 logger.info(
                     "Triage: is_relevant=%s score=%s reason=%.120r",
                     parsed.is_relevant, parsed.relevance_score, parsed.reason,
@@ -259,7 +286,10 @@ class LLMExtractor:
                 raw = resp.choices[0].message.content
                 if not raw:
                     raise ValueError("empty translation response")
-                parsed = AbstractTranslationResponse.model_validate_json(raw)
+                clean = _unwrap_llm_json_content(raw)
+                if not clean:
+                    raise ValueError("empty translation after unwrap")
+                parsed = AbstractTranslationResponse.model_validate_json(clean)
                 out = (parsed.translation or "").strip()
                 if not out:
                     raise ValueError("empty translation field")
@@ -361,7 +391,9 @@ class LLMExtractor:
                 # 关键: 使用 model_validate_json() 进行 Pydantic 校验
                 # Reference: TECH_DESIGN.md Section 2
                 # =================================================================
-                extraction = PaperExtractionResponse.model_validate_json(response_content)
+                extraction = PaperExtractionResponse.model_validate_json(
+                    _unwrap_llm_json_content(response_content)
+                )
 
                 # 填充论文元数据 (LLM 输出可能不包含这些)
                 extraction.paper_id = paper_id
@@ -488,7 +520,9 @@ class LLMExtractor:
                 )
                 content = response.choices[0].message.content
                 last_response = content or ""
-                return EntityResolutionResponse.model_validate_json(content)
+                return EntityResolutionResponse.model_validate_json(
+                    _unwrap_llm_json_content(content)
+                )
             except json.JSONDecodeError as e:
                 last_error = f"JSON parse failed: {e}"
                 logger.warning("resolve_method_entities attempt %s: %s", attempt, last_error)

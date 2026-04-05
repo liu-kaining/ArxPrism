@@ -31,6 +31,21 @@ from src.services.task_manager import task_manager, get_task_manager
 
 logger = logging.getLogger(__name__)
 
+_NOT_FOUND = "Task not found"
+
+
+def _require_task_for_user(task: Optional[Task], user: CurrentUser) -> Task:
+    """任务存在且当前用户可访问（本人或管理员）；否则 404 防枚举。"""
+    if task is None:
+        raise HTTPException(status_code=404, detail=_NOT_FOUND)
+    if (user.role or "").lower() == "admin":
+        return task
+    owner = (task.owner_user_id or "").strip()
+    if owner and owner == user.id:
+        return task
+    raise HTTPException(status_code=404, detail=_NOT_FOUND)
+
+
 router = APIRouter(
     prefix="/api/v1/tasks",
     tags=["tasks"],
@@ -43,6 +58,7 @@ async def _dispatch_task_execution(
     query: str,
     domain_preset: str,
     max_results: int,
+    owner_user_id: str,
 ) -> None:
     from src.worker.tasks import get_celery_app, run_task_pipeline_task, execute_task_pipeline_async
     import asyncio
@@ -54,6 +70,7 @@ async def _dispatch_task_execution(
             query=query,
             domain_preset=domain_preset,
             max_results=max_results,
+            owner_user_id=owner_user_id,
         )
         logger.info("Task %s dispatched to Celery worker", task_id)
     else:
@@ -63,6 +80,7 @@ async def _dispatch_task_execution(
                 query=query,
                 domain_preset=domain_preset,
                 max_results=max_results,
+                owner_user_id=owner_user_id,
             )
         )
         logger.info("Task %s started in-process (no Celery)", task_id)
@@ -126,6 +144,7 @@ async def create_task(
                 query=request.query,
                 domain_preset=request.domain_preset,
                 max_results=request.max_results,
+                owner_user_id=user.id,
             )
         except Exception:
             if not settings.auth_disabled:
@@ -137,6 +156,7 @@ async def create_task(
             request.query,
             request.domain_preset,
             request.max_results,
+            user.id,
         )
 
         return APIResponse(
@@ -156,6 +176,7 @@ async def create_task(
 
 @router.get("", response_model=APIResponse)
 async def list_tasks(
+    user: CurrentUser = Depends(require_user),
     status: Optional[TaskStatus] = Query(None, description="按单一状态筛选"),
     active_only: bool = Query(
         False, description="仅 pending / running / paused（与 terminal_only 互斥）"
@@ -166,6 +187,10 @@ async def list_tasks(
     ),
     offset: int = Query(0, ge=0, description="筛选后的偏移（分页）"),
     limit: int = Query(20, ge=1, le=100, description="每页条数"),
+    scope: str = Query(
+        "mine",
+        description="mine=仅本人最近任务；global=全站最近（仅 admin）",
+    ),
 ) -> APIResponse:
     """
     获取任务列表.
@@ -177,12 +202,18 @@ async def list_tasks(
         - active_only: 仅活跃任务
         - terminal_only: 仅已结束任务（适合「最近完成」分页）
         - offset / limit: 分页
+        - scope: mine | global（global 需 admin）
     """
     if status is None and active_only and terminal_only:
         raise HTTPException(
             status_code=400,
             detail="active_only and terminal_only cannot both be true",
         )
+    sc = (scope or "mine").strip().lower()
+    if sc not in ("mine", "global"):
+        raise HTTPException(status_code=400, detail="scope must be mine or global")
+    if sc == "global" and (user.role or "").lower() != "admin":
+        raise HTTPException(status_code=403, detail="global task list requires admin")
     try:
         manager = await get_task_manager()
         use_active = active_only and status is None
@@ -193,6 +224,8 @@ async def list_tasks(
             status=status,
             active_only=use_active,
             terminal_only=use_terminal,
+            list_user_id=user.id,
+            scope_global=(sc == "global"),
         )
 
         summaries = [
@@ -205,6 +238,7 @@ async def list_tasks(
                 created_at=t.created_at,
                 updated_at=t.updated_at,
                 completion_summary=t.completion_summary,
+                owner_user_id=t.owner_user_id,
             )
             for t in tasks
         ]
@@ -226,7 +260,7 @@ async def list_tasks(
 
 
 @router.get("/{task_id}", response_model=APIResponse)
-async def get_task(task_id: str) -> APIResponse:
+async def get_task(task_id: str, user: CurrentUser = Depends(require_user)) -> APIResponse:
     """
     获取任务详情.
 
@@ -243,9 +277,7 @@ async def get_task(task_id: str) -> APIResponse:
     try:
         manager = await get_task_manager()
         task = await manager.get_task(task_id)
-
-        if task is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        task = _require_task_for_user(task, user)
 
         return APIResponse(
             code=200,
@@ -265,7 +297,9 @@ async def get_task(task_id: str) -> APIResponse:
 # =============================================================================
 
 @router.post("/{task_id}/pause", response_model=APIResponse)
-async def pause_task(task_id: str) -> APIResponse:
+async def pause_task(
+    task_id: str, user: CurrentUser = Depends(require_user)
+) -> APIResponse:
     """
     暂停任务.
 
@@ -283,9 +317,7 @@ async def pause_task(task_id: str) -> APIResponse:
     try:
         manager = await get_task_manager()
         task = await manager.get_task(task_id)
-
-        if task is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        _require_task_for_user(task, user)
 
         success = await manager.pause_task(task_id)
 
@@ -309,7 +341,9 @@ async def pause_task(task_id: str) -> APIResponse:
 
 
 @router.post("/{task_id}/resume", response_model=APIResponse)
-async def resume_task(task_id: str) -> APIResponse:
+async def resume_task(
+    task_id: str, user: CurrentUser = Depends(require_user)
+) -> APIResponse:
     """
     恢复任务.
 
@@ -326,9 +360,7 @@ async def resume_task(task_id: str) -> APIResponse:
     try:
         manager = await get_task_manager()
         task = await manager.get_task(task_id)
-
-        if task is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        _require_task_for_user(task, user)
 
         success = await manager.resume_task(task_id)
 
@@ -352,7 +384,9 @@ async def resume_task(task_id: str) -> APIResponse:
 
 
 @router.post("/{task_id}/cancel", response_model=APIResponse)
-async def cancel_task(task_id: str) -> APIResponse:
+async def cancel_task(
+    task_id: str, user: CurrentUser = Depends(require_user)
+) -> APIResponse:
     """
     取消任务.
 
@@ -370,9 +404,7 @@ async def cancel_task(task_id: str) -> APIResponse:
     try:
         manager = await get_task_manager()
         task = await manager.get_task(task_id)
-
-        if task is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        _require_task_for_user(task, user)
 
         success = await manager.cancel_task(task_id)
 
@@ -417,9 +449,7 @@ async def retry_task(
     try:
         manager = await get_task_manager()
         task = await manager.get_task(task_id)
-
-        if task is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        task = _require_task_for_user(task, user)
 
         if task.status != TaskStatus.FAILED:
             raise HTTPException(
@@ -434,6 +464,7 @@ async def retry_task(
                 query=task.query,
                 domain_preset=task.domain_preset,
                 max_results=task.max_results,
+                owner_user_id=user.id,
             )
         except Exception:
             if not settings.auth_disabled:
@@ -445,6 +476,7 @@ async def retry_task(
             task.query,
             task.domain_preset,
             task.max_results,
+            user.id,
         )
 
         return APIResponse(
@@ -469,7 +501,9 @@ async def retry_task(
 # =============================================================================
 
 @router.get("/{task_id}/progress", response_model=APIResponse)
-async def get_task_progress(task_id: str) -> APIResponse:
+async def get_task_progress(
+    task_id: str, user: CurrentUser = Depends(require_user)
+) -> APIResponse:
     """
     获取任务进度.
 
@@ -485,9 +519,7 @@ async def get_task_progress(task_id: str) -> APIResponse:
     try:
         manager = await get_task_manager()
         task = await manager.get_task(task_id)
-
-        if task is None:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        task = _require_task_for_user(task, user)
 
         return APIResponse(
             code=200,

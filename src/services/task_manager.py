@@ -8,7 +8,8 @@ Redis 存储结构:
 - arxprism:task:{task_id} → Task JSON (TTL 7天)
 - arxprism:task:{task_id}:pause → 暂停信号 (存在即暂停)
 - arxprism:task:{task_id}:cancel → 取消信号 (存在即取消)
-- arxprism:tasks:recent → 最近100个任务ID列表
+- arxprism:tasks:recent:{user_id} → 该用户最近任务 ID（最多 100）
+- arxprism:tasks:recent:_global → 全站最近任务 ID（管理员列表；最多 100）
 
 Reference: ARCHITECTURE.md Section 5 (扩展)
 """
@@ -39,7 +40,11 @@ logger = logging.getLogger(__name__)
 TASK_KEY_PREFIX = "arxprism:task:"
 PAUSE_KEY_PREFIX = "arxprism:task:{}:pause"
 CANCEL_KEY_PREFIX = "arxprism:task:{}:cancel"
-RECENT_TASKS_KEY = "arxprism:tasks:recent"
+RECENT_TASKS_GLOBAL_KEY = "arxprism:tasks:recent:_global"
+
+
+def _recent_tasks_key_for_user(user_id: str) -> str:
+    return f"arxprism:tasks:recent:{user_id}"
 
 # 任务过期时间 (7天)
 TASK_TTL = 7 * 24 * 60 * 60
@@ -107,7 +112,9 @@ class TaskManager:
         self,
         query: str,
         domain_preset: str = "sre",
-        max_results: int = 10
+        max_results: int = 10,
+        *,
+        owner_user_id: str,
     ) -> Task:
         """
         创建新任务.
@@ -116,6 +123,7 @@ class TaskManager:
             query: arXiv 搜索查询
             domain_preset: 领域预设
             max_results: 最大论文数
+            owner_user_id: 创建者 Supabase user id（须非空）
 
         Returns:
             创建的 Task 对象
@@ -129,6 +137,7 @@ class TaskManager:
             query=query,
             domain_preset=domain_preset,
             max_results=max_results,
+            owner_user_id=owner_user_id,
             progress=TaskProgress(total=0, processed=0),
             results=[],
             created_at=now,
@@ -139,7 +148,7 @@ class TaskManager:
         await self._save_task(task)
 
         # 添加到最近任务列表
-        await self._add_to_recent_tasks(task_id)
+        await self._add_to_recent_tasks(task_id, owner_user_id)
 
         logger.info("Created task %s: query='%s', domain='%s'", task_id, query, domain_preset)
         return task
@@ -184,15 +193,16 @@ class TaskManager:
             task.model_dump_json()
         )
 
-    async def _add_to_recent_tasks(self, task_id: str) -> None:
-        """添加任务 ID 到最近任务列表."""
+    async def _add_to_recent_tasks(self, task_id: str, owner_user_id: str) -> None:
+        """添加任务 ID 到用户维度的最近列表与全站列表."""
         redis = self._get_redis()
 
-        # 使用 LPUSH 添加到列表头部
-        await redis.lpush(RECENT_TASKS_KEY, task_id)
+        user_key = _recent_tasks_key_for_user(owner_user_id)
+        await redis.lpush(user_key, task_id)
+        await redis.ltrim(user_key, 0, MAX_RECENT_TASKS - 1)
 
-        # 保留最近 100 个
-        await redis.ltrim(RECENT_TASKS_KEY, 0, MAX_RECENT_TASKS - 1)
+        await redis.lpush(RECENT_TASKS_GLOBAL_KEY, task_id)
+        await redis.ltrim(RECENT_TASKS_GLOBAL_KEY, 0, MAX_RECENT_TASKS - 1)
 
     _ACTIVE_STATUSES = frozenset(
         {TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.PAUSED}
@@ -224,15 +234,26 @@ class TaskManager:
         status: Optional[TaskStatus] = None,
         active_only: bool = False,
         terminal_only: bool = False,
+        list_user_id: str = "",
+        scope_global: bool = False,
     ) -> Tuple[List[Task], int]:
         """
         在最近任务 ID 列表（最多 MAX_RECENT_TASKS 条）上筛选后分页。
 
         顺序与 Redis 列表一致（新任务在前）。
+        - scope_global=True：读全站列表（仅管理员接口应使用）
+        - 否则：读 list_user_id 对应用户的列表
         """
         redis = self._get_redis()
+        if scope_global:
+            recent_key = RECENT_TASKS_GLOBAL_KEY
+        else:
+            uid = (list_user_id or "").strip()
+            if not uid:
+                return [], 0
+            recent_key = _recent_tasks_key_for_user(uid)
         task_ids = await redis.lrange(
-            RECENT_TASKS_KEY, 0, MAX_RECENT_TASKS - 1
+            recent_key, 0, MAX_RECENT_TASKS - 1
         )
         if not task_ids:
             return [], 0
@@ -274,6 +295,8 @@ class TaskManager:
             status=None,
             active_only=False,
             terminal_only=False,
+            list_user_id="",
+            scope_global=True,
         )
         return tasks
 

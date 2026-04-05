@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { taskApi, type Task } from "@/lib/api/client";
+import { meApi, taskApi, type Task } from "@/lib/api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -15,12 +15,34 @@ export default function RecentTasksPanel() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [listScope, setListScope] = useState<"mine" | "global">("mine");
 
-  const load = async () => {
+  useEffect(() => {
+    let cancelled = false;
+    void meApi
+      .getMe()
+      .then((m) => {
+        if (!cancelled)
+          setIsAdmin(m.profile.role?.toLowerCase?.() === "admin");
+      })
+      .catch(() => {
+        if (!cancelled) setIsAdmin(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await taskApi.listTasks({ limit: 20, offset: 0 });
+      const res = await taskApi.listTasks({
+        limit: 20,
+        offset: 0,
+        scope: listScope,
+      });
       setTasks(res.tasks);
       setTotal(res.total);
     } catch (e) {
@@ -29,11 +51,11 @@ export default function RecentTasksPanel() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [listScope]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   return (
     <Card className="card-hover border-border bg-card shadow-md">
@@ -44,6 +66,35 @@ export default function RecentTasksPanel() {
           </span>
           任务进度一览
         </CardTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin ? (
+            <div className="flex rounded-lg border border-border bg-muted/50 p-0.5 text-xs">
+              <button
+                type="button"
+                className={cn(
+                  "rounded-md px-2.5 py-1 font-medium transition-colors",
+                  listScope === "mine"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => setListScope("mine")}
+              >
+                我的
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "rounded-md px-2.5 py-1 font-medium transition-colors",
+                  listScope === "global"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => setListScope("global")}
+              >
+                全站
+              </button>
+            </div>
+          ) : null}
         <Button
           type="button"
           variant="outline"
@@ -57,10 +108,12 @@ export default function RecentTasksPanel() {
           />
           刷新
         </Button>
+        </div>
       </CardHeader>
       <CardContent className="pt-0">
         <p className="mb-3 text-xs text-muted-foreground">
-          点击下方任一行进入<strong>进度详情页</strong>（暂停 / 取消 / 逐篇结果）。创建任务成功后也会自动跳转同一页面。
+          默认仅列出<strong>你创建的</strong>最近任务；管理员可切换到「全站」。
+          点任一行进入<strong>进度详情页</strong>（暂停 / 取消 / 逐篇结果）。
         </p>
         {loading ? (
           <div className="space-y-2">
@@ -121,6 +174,15 @@ export default function RecentTasksPanel() {
                         {t.domain_preset
                           ? ` · 预设 ${t.domain_preset}`
                           : null}
+                        {listScope === "global" && t.owner_user_id ? (
+                          <>
+                            {" "}
+                            · 创建者{" "}
+                            <span className="font-mono">
+                              {t.owner_user_id.slice(0, 8)}…
+                            </span>
+                          </>
+                        ) : null}
                       </p>
                     </div>
                     <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />

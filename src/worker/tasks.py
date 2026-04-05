@@ -144,7 +144,8 @@ def get_celery_app() -> Optional[Celery]:
 
 async def _process_paper_async(
     paper_content: dict,
-    task_id: Optional[str] = None
+    task_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
 ) -> PaperProcessingResult:
     """
     论文处理核心逻辑 (异步版本，供 Celery 和同步模式共用)。
@@ -211,6 +212,18 @@ async def _process_paper_async(
             result.status = PaperProcessingStatus.SKIPPED
             result.message = "Domain not relevant (filtered by LLM)"
             result.is_relevant = False
+            try:
+                await neo4j_client.ensure_ingest_tombstone(
+                    paper_id,
+                    "domain_gatekeeper",
+                    result.title or paper_title or "",
+                )
+            except Exception as ex:
+                logger.warning(
+                    "Paper %s: ingest tombstone failed (non-fatal): %s",
+                    paper_id,
+                    ex,
+                )
             return result
 
         if extraction.extraction_data is None:
@@ -258,6 +271,22 @@ async def _process_paper_async(
             result.message = "Neo4j upsert failed"
             return result
 
+        uid = (owner_user_id or "").strip()
+        tid = (task_id or "").strip()
+        if uid and tid:
+            try:
+                await neo4j_client.record_paper_fetch_contribution(
+                    arxiv_id=paper_id,
+                    owner_user_id=uid,
+                    redis_task_id=tid,
+                )
+            except Exception as ex:
+                logger.warning(
+                    "Paper %s: record fetch contribution failed (non-fatal): %s",
+                    paper_id,
+                    ex,
+                )
+
         logger.info("Paper %s: Successfully processed", paper_id)
         result.status = PaperProcessingStatus.SUCCESS
         ed_final = extraction.extraction_data
@@ -274,11 +303,37 @@ async def _process_paper_async(
         return result
 
 
+async def _process_paper_with_one_retry_on_failure(
+    paper_content: dict,
+    task_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
+) -> PaperProcessingResult:
+    """
+    单篇流水线最多执行 2 次：首次若状态为 FAILED（萃取/Neo4j/异常等）则自动再跑一轮。
+    SKIPPED（领域不相关）不重试。
+    """
+    result = await _process_paper_async(
+        paper_content, task_id, owner_user_id=owner_user_id
+    )
+    if result.status != PaperProcessingStatus.FAILED:
+        return result
+    paper_id = paper_content.get("arxiv_id", "unknown")
+    logger.warning(
+        "Paper %s: failed (%s), automatic retry 1/1",
+        paper_id,
+        (result.message or "")[:400],
+    )
+    return await _process_paper_async(
+        paper_content, task_id, owner_user_id=owner_user_id
+    )
+
+
 async def _execute_task_pipeline(
     task_id: str,
     query: str,
     domain_preset: str,
-    max_results: int
+    max_results: int,
+    owner_user_id: Optional[str] = None,
 ) -> None:
     """
     执行完整的任务流水线 (带状态追踪和暂停/取消支持).
@@ -368,7 +423,9 @@ async def _execute_task_pipeline(
                 "summary": paper.summary,
             }
 
-            result = await _process_paper_async(content_dict, task_id)
+            result = await _process_paper_with_one_retry_on_failure(
+                content_dict, task_id, owner_user_id=owner_user_id
+            )
 
             # 更新任务结果
             await task_manager.add_paper_result(task_id, result)
@@ -392,7 +449,7 @@ def get_process_paper_task():
     """获取 process_paper_task 函数 (Celery Task 或同步回退)."""
     if get_celery_app() is not None:
         return process_paper_task
-    return _process_paper_async
+    return _process_paper_with_one_retry_on_failure
 
 
 @celery.task(
@@ -414,7 +471,7 @@ def process_paper_task(self, paper_content: dict) -> dict:
         Dict with status and paper_id
     """
     try:
-        return _run_async(_process_paper_async(paper_content))
+        return _run_async(_process_paper_with_one_retry_on_failure(paper_content))
     except Exception as e:
         logger.error("Task failed: %s", e)
         raise self.retry(exc=e)
@@ -457,7 +514,7 @@ def trigger_pipeline_sync(topic_query: str, max_results: int = 10, domain_preset
                 "html_url": paper.html_url,
                 "summary": paper.summary,
             }
-            result = await _process_paper_async(content_dict)
+            result = await _process_paper_with_one_retry_on_failure(content_dict)
             results.append(result)
             logger.debug("[SYNC MODE] Processed paper %s: %s", paper.arxiv_id, result.status)
 
@@ -498,7 +555,7 @@ async def trigger_pipeline_sync_async(topic_query: str, max_results: int = 10, d
             "html_url": paper.html_url,
             "summary": paper.summary,
         }
-        result = await _process_paper_async(content_dict)
+        result = await _process_paper_with_one_retry_on_failure(content_dict)
         results.append(result)
         logger.debug("[SYNC MODE][ASYNC] Processed paper %s: %s", paper.arxiv_id, result.status)
 
@@ -601,7 +658,8 @@ async def execute_task_pipeline_async(
     task_id: str,
     query: str,
     domain_preset: str,
-    max_results: int
+    max_results: int,
+    owner_user_id: Optional[str] = None,
 ) -> None:
     """
     执行任务流水线 (由 task_routes.py 的 create_task 调用).
@@ -612,7 +670,9 @@ async def execute_task_pipeline_async(
         domain_preset: 领域预设
         max_results: 最大论文数
     """
-    await _execute_task_pipeline(task_id, query, domain_preset, max_results)
+    await _execute_task_pipeline(
+        task_id, query, domain_preset, max_results, owner_user_id=owner_user_id
+    )
 
 
 # =============================================================================
@@ -633,7 +693,8 @@ def run_task_pipeline_task(
     task_id: str,
     query: str,
     domain_preset: str,
-    max_results: int
+    max_results: int,
+    owner_user_id: Optional[str] = None,
 ) -> dict:
     """
     Celery Task: 在后台 Worker 中执行完整任务流水线.
@@ -649,7 +710,15 @@ def run_task_pipeline_task(
     """
     try:
         logger.info("Celery task started: task_id=%s", task_id)
-        _run_async(execute_task_pipeline_async(task_id, query, domain_preset, max_results))
+        _run_async(
+            execute_task_pipeline_async(
+                task_id,
+                query,
+                domain_preset,
+                max_results,
+                owner_user_id=owner_user_id,
+            )
+        )
         return {"status": "completed", "task_id": task_id}
     except Exception as e:
         logger.error("Celery task failed: task_id=%s, error=%s", task_id, e)
