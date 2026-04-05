@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
@@ -37,6 +37,7 @@ type Props = {
   height: number;
   showMiniMap?: boolean;
   className?: string;
+  onNodeClick?: (nodeId: string, nodeName: string) => void;
 };
 
 function evolutionDataSignature(
@@ -69,6 +70,7 @@ function EvolutionGraphInner({
   links,
   height,
   showMiniMap,
+  onNodeClick,
 }: Props) {
   const dataSignature = useMemo(
     () => evolutionDataSignature(nodes, links, height),
@@ -93,6 +95,16 @@ function EvolutionGraphInner({
   const innerWidth = Math.max(layout.contentWidth, 640);
   const innerHeight = Math.max(height, layout.contentHeight);
 
+  const handleNodeClick = useCallback(
+    (_event: React.MouseEvent, node: { id: string; data: Record<string, unknown> }) => {
+      if (onNodeClick) {
+        const label = String(node.data.label ?? node.id);
+        onNodeClick(node.id, label);
+      }
+    },
+    [onNodeClick]
+  );
+
   return (
     <div className="relative" style={{ width: "100%", height }}>
       <div className="overflow-auto" style={{ width: "100%", height }}>
@@ -101,6 +113,7 @@ function EvolutionGraphInner({
           edges={rfEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onNodeClick={handleNodeClick}
           nodeTypes={evolutionNodeTypes}
           edgeTypes={evolutionEdgeTypes}
           minZoom={0.1}
@@ -143,6 +156,7 @@ export function EvolutionGraphView({
   height,
   showMiniMap = true,
   className,
+  onNodeClick,
 }: Props) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -174,6 +188,7 @@ export function EvolutionGraphView({
           links={links}
           height={height}
           showMiniMap={showMiniMap}
+          onNodeClick={onNodeClick}
         />
       </ReactFlowProvider>
     </div>

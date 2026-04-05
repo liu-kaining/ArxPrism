@@ -1721,6 +1721,559 @@ class Neo4jClient:
             logger.error("Failed to list method names: %s", e)
             return []
 
+    async def get_method_details(self, method_name: str) -> Optional[Dict[str, Any]]:
+        """
+        获取方法的完整详情.
+
+        Args:
+            method_name: Method.name (归一化键) 或 original_name
+
+        Returns:
+            方法详情字典，包含基本信息、相关论文、进化统计
+        """
+        normalized = _normalize_name(method_name)
+        raw = (method_name or "").strip()
+
+        try:
+            if self._driver is None:
+                await self.connect()
+            async with self._driver.session() as session:
+                # Find the method node
+                mres = await session.run(
+                    """
+                    MATCH (m:Method)
+                    WHERE ($norm <> '' AND m.name = $norm)
+                       OR ($raw <> '' AND toLower(trim(coalesce(m.original_name, '')))
+                            = toLower(trim($raw)))
+                    RETURN m
+                    ORDER BY
+                      CASE WHEN $norm <> '' AND m.name = $norm THEN 0 ELSE 1 END
+                    LIMIT 1
+                    """,
+                    norm=normalized or "",
+                    raw=raw,
+                )
+                mrow = await mres.single()
+                if not mrow or not mrow.get("m"):
+                    return None
+
+                m = mrow["m"]
+                method_key = m.get("name", "")
+
+                # Get papers that propose this method
+                papers_res = await session.run(
+                    """
+                    MATCH (p:Paper)-[:PROPOSES]->(m:Method {name: $mk})
+                    RETURN p.arxiv_id AS arxiv_id, p.title AS title,
+                           p.published_date AS published_date
+                    ORDER BY p.published_date DESC
+                    """,
+                    mk=method_key,
+                )
+                papers = await papers_res.data()
+
+                # Get papers that compare against this method (use as baseline)
+                baseline_res = await session.run(
+                    """
+                    MATCH (p:Paper)-[r:IMPROVES_UPON]->(m:Method {name: $mk})
+                    RETURN p.arxiv_id AS arxiv_id, p.title AS title,
+                           r.dataset AS dataset, r.metrics_improvement AS improvement
+                    ORDER BY p.published_date DESC
+                    """,
+                    mk=method_key,
+                )
+                baselines = await baseline_res.data()
+
+                # Get evolution stats: count ancestors and descendants
+                ancestor_res = await session.run(
+                    """
+                    MATCH (m:Method {name: $mk})
+                    MATCH (ancestor:Method)-[:EVOLVED_FROM*1..10]->(m)
+                    RETURN count(DISTINCT ancestor) AS ancestor_count
+                    """,
+                    mk=method_key,
+                )
+                ancestor_count = (await ancestor_res.single() or {}).get("ancestor_count", 0)
+
+                descendant_res = await session.run(
+                    """
+                    MATCH (m:Method {name: $mk})
+                    MATCH (m)-[:EVOLVED_FROM*1..10]->(descendant:Method)
+                    RETURN count(DISTINCT descendant) AS descendant_count
+                    """,
+                    mk=method_key,
+                )
+                descendant_count = (await descendant_res.single() or {}).get("descendant_count", 0)
+
+                # Get IMPROVES_UPON edges count
+                improves_res = await session.run(
+                    """
+                    MATCH (m:Method {name: $mk})-[r:IMPROVES_UPON]->(:Method)
+                    RETURN count(r) AS improves_count
+                    """,
+                    mk=method_key,
+                )
+                improves_count = (await improves_res.single() or {}).get("improves_count", 0)
+
+                return {
+                    "name": m.get("original_name") or m.get("name", ""),
+                    "name_key": method_key,
+                    "description": m.get("description") or "",
+                    "core_architecture": _method_core_architecture(m),
+                    "key_innovations": m.get("key_innovations") or [],
+                    "limitations": m.get("limitations") or [],
+                    "papers": [
+                        {
+                            "arxiv_id": p.get("arxiv_id", ""),
+                            "title": p.get("title", ""),
+                            "published_date": p.get("published_date", ""),
+                        }
+                        for p in papers
+                    ],
+                    "papers_count": len(papers),
+                    "baselines": [
+                        {
+                            "arxiv_id": b.get("arxiv_id", ""),
+                            "title": b.get("title", ""),
+                            "dataset": b.get("dataset", ""),
+                            "improvement": b.get("improvement", ""),
+                        }
+                        for b in baselines
+                    ],
+                    "evolution_stats": {
+                        "ancestor_count": ancestor_count,
+                        "descendant_count": descendant_count,
+                        "improves_count": improves_count,
+                    },
+                }
+
+        except Exception as e:
+            logger.error("Failed to get method details: %s", e)
+            return None
+
+    async def get_method_papers(self, method_name: str) -> List[Dict[str, Any]]:
+        """
+        获取与指定方法相关的所有论文.
+
+        Args:
+            method_name: Method.name (归一化键)
+
+        Returns:
+            相关论文列表
+        """
+        normalized = _normalize_name(method_name)
+
+        try:
+            if self._driver is None:
+                await self.connect()
+            async with self._driver.session() as session:
+                # Find method key
+                mres = await session.run(
+                    """
+                    MATCH (m:Method)
+                    WHERE m.name = $norm
+                       OR toLower(trim(coalesce(m.original_name, ''))) = toLower(trim($raw))
+                    RETURN m.name AS name_key
+                    LIMIT 1
+                    """,
+                    norm=normalized or "",
+                    raw=method_name or "",
+                )
+                mrow = await mres.single()
+                if not mrow:
+                    return []
+
+                method_key = mrow["name_key"]
+
+                # Papers that propose this method
+                proposes_res = await session.run(
+                    """
+                    MATCH (p:Paper)-[:PROPOSES]->(m:Method {name: $mk})
+                    RETURN p.arxiv_id AS arxiv_id, p.title AS title,
+                           p.published_date AS published_date,
+                           'PROPOSES' AS relationship
+                    """,
+                    mk=method_key,
+                )
+                proposes = await proposes_res.data()
+
+                # Papers that improve upon this method
+                improves_res = await session.run(
+                    """
+                    MATCH (p:Paper)-[r:IMPROVES_UPON]->(m:Method {name: $mk})
+                    RETURN p.arxiv_id AS arxiv_id, p.title AS title,
+                           p.published_date AS published_date,
+                           r.dataset AS dataset, r.metrics_improvement AS improvement,
+                           'IMPROVES_UPON' AS relationship
+                    """,
+                    mk=method_key,
+                )
+                improves = await improves_res.data()
+
+                # Papers that use this method as baseline
+                baseline_res = await session.run(
+                    """
+                    MATCH (p:Paper)-[:PROPOSES]->(m:Method)
+                    MATCH (m)-[r:IMPROVES_UPON]->(baseline:Method {name: $mk})
+                    RETURN p.arxiv_id AS arxiv_id, p.title AS title,
+                           p.published_date AS published_date,
+                           r.dataset AS dataset, r.metrics_improvement AS improvement,
+                           'BASELINE_FOR' AS relationship
+                    """,
+                    mk=method_key,
+                )
+                baselines = await baseline_res.data()
+
+                all_papers = []
+                seen = set()
+                for p in proposes + improves + baselines:
+                    arxiv_id = p.get("arxiv_id", "")
+                    if arxiv_id and arxiv_id not in seen:
+                        seen.add(arxiv_id)
+                        all_papers.append({
+                            "arxiv_id": arxiv_id,
+                            "title": p.get("title", ""),
+                            "published_date": p.get("published_date", ""),
+                            "relationship": p.get("relationship", ""),
+                            "dataset": p.get("dataset", ""),
+                            "improvement": p.get("improvement", ""),
+                        })
+
+                return all_papers
+
+        except Exception as e:
+            logger.error("Failed to get method papers: %s", e)
+            return []
+
+    async def get_method_evolution(
+        self,
+        method_name: str,
+        depth: int = 2,
+        direction: str = "both"
+    ) -> Dict[str, Any]:
+        """
+        展开方法的额外进化世代.
+
+        Args:
+            method_name: Method.name (归一化键)
+            depth: 展开的世代数 (默认2)
+            direction: ancestors | descendants | both
+
+        Returns:
+            额外的节点和边
+        """
+        normalized = _normalize_name(method_name)
+        depth = max(1, min(depth, 5))  # Clamp 1-5
+
+        try:
+            if self._driver is None:
+                await self.connect()
+            async with self._driver.session() as session:
+                # Find method key
+                mres = await session.run(
+                    """
+                    MATCH (m:Method)
+                    WHERE m.name = $norm
+                       OR toLower(trim(coalesce(m.original_name, ''))) = toLower(trim($raw))
+                    RETURN m.name AS name_key
+                    LIMIT 1
+                    """,
+                    norm=normalized or "",
+                    raw=method_name or "",
+                )
+                mrow = await mres.single()
+                if not mrow:
+                    return {"nodes": [], "links": []}
+
+                method_key = mrow["name_key"]
+                nodes = []
+                links = []
+                seen_methods = {method_key}
+
+                # Get ancestors
+                if direction in ("ancestors", "both"):
+                    ares = await session.run(
+                        f"""
+                        MATCH (t:Method {{name: $mk}})
+                        MATCH p = (t)-[:EVOLVED_FROM*1..{depth}]->(a:Method)
+                        WHERE a <> t
+                        WITH a, min(length(p)) AS d
+                        RETURN a, d
+                        ORDER BY d, a.name
+                        """,
+                        mk=method_key,
+                    )
+                    for row in await ares.data():
+                        ancestor = row.get("a")
+                        d = row.get("d", 1)
+                        if ancestor and ancestor["name"] not in seen_methods:
+                            seen_methods.add(ancestor["name"])
+                            nodes.append({
+                                "id": ancestor["name"],
+                                "name": ancestor.get("original_name") or ancestor["name"],
+                                "generation": -int(d),
+                                "core_architecture": _method_core_architecture(ancestor),
+                            })
+
+                # Get descendants
+                if direction in ("descendants", "both"):
+                    dres = await session.run(
+                        f"""
+                        MATCH (t:Method {{name: $mk}})
+                        MATCH p = (t)<-[:EVOLVED_FROM*1..{depth}]-(d:Method)
+                        WHERE d <> t
+                        WITH d, min(length(p)) AS d
+                        RETURN d, d
+                        ORDER BY d, d.name
+                        """,
+                        mk=method_key,
+                    )
+                    for row in await dres.data():
+                        descendant = row.get("d")
+                        d = row.get("d", 1)
+                        if descendant and descendant["name"] not in seen_methods:
+                            seen_methods.add(descendant["name"])
+                            nodes.append({
+                                "id": descendant["name"],
+                                "name": descendant.get("original_name") or descendant["name"],
+                                "generation": int(d),
+                                "core_architecture": _method_core_architecture(descendant),
+                            })
+
+                # Get links between collected nodes
+                if nodes and seen_methods:
+                    id_list = list(seen_methods)
+                    res_edges = await session.run(
+                        """
+                        MATCH (s:Method)-[r:EVOLVED_FROM]->(t:Method)
+                        WHERE s.name IN $ids AND t.name IN $ids
+                        RETURN s.name AS source, t.name AS target,
+                               coalesce(r.reason, '') AS reason,
+                               coalesce(toString(r.discovered_at), '') AS discovered_at,
+                               coalesce(r.dataset, '') AS dataset,
+                               coalesce(r.metrics_improvement, '') AS metrics_improvement
+                        """,
+                        ids=id_list,
+                    )
+                    for edge_rec in await res_edges.data():
+                        links.append({
+                            "source": edge_rec["source"],
+                            "target": edge_rec["target"],
+                            "relationshipType": "EVOLVED_FROM",
+                            "reason": edge_rec.get("reason") or "",
+                            "discovered_at": edge_rec.get("discovered_at") or "",
+                            "dataset": edge_rec.get("dataset") or "",
+                            "metrics_improvement": edge_rec.get("metrics_improvement") or "",
+                        })
+
+                return {"nodes": nodes, "links": links}
+
+        except Exception as e:
+            logger.error("Failed to get method evolution: %s", e)
+            return {"nodes": [], "links": []}
+
+    async def get_subgraph(
+        self,
+        center_node_id: str,
+        depth: int = 2,
+        node_types: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        从指定节点展开 n-hop 子图.
+
+        Args:
+            center_node_id: 中心节点ID
+            depth: 展开深度 (默认2)
+            node_types: 限定节点类型列表，为空则不限
+
+        Returns:
+            子图的节点和边
+        """
+        depth = max(1, min(depth, 4))  # Clamp 1-4
+
+        try:
+            if self._driver is None:
+                await self.connect()
+            async with self._driver.session() as session:
+                # Determine node type filter
+                type_filter = ""
+                if node_types:
+                    types_str = ", ".join(f"'{t}'" for t in node_types)
+                    type_filter = f"AND coalesce([l IN labels(n) WHERE l IN [{types_str}]], [true])"
+
+                cypher = f"""
+                MATCH (center)
+                WHERE center.arxiv_id = $node_id
+                   OR center.name = $node_id
+                   OR center.element_id = $node_id
+                OPTIONAL MATCH path = (center)-[r*1..{depth}]-(connected)
+                WITH center, connected, r
+                WHERE center <> connected {type_filter}
+                WITH center AS n, collect(DISTINCT connected) AS neighbors
+                UNWIND neighbors + [center] AS node
+                WITH DISTINCT node
+                RETURN node
+                """
+
+                result = await session.run(cypher, node_id=center_node_id)
+                rows = await result.data()
+
+                nodes = []
+                node_ids = set()
+                for row in rows:
+                    node = row.get("node")
+                    if node:
+                        nid = node.get("arxiv_id") or node.get("name") or node.get("element_id")
+                        if nid and nid not in node_ids:
+                            node_ids.add(nid)
+                            nodes.append({
+                                "id": nid,
+                                "labels": list(node.labels) if hasattr(node, "labels") else [],
+                                "properties": dict(node),
+                            })
+
+                # Get relationships between collected nodes
+                if node_ids:
+                    rel_cypher = """
+                    MATCH (n1)-[r]-(n2)
+                    WHERE (n1.arxiv_id IN $ids OR n1.name IN $ids)
+                      AND (n2.arxiv_id IN $ids OR n2.name IN $ids)
+                    RETURN n1.arxiv_id AS start, n2.arxiv_id AS end,
+                           type(r) AS type,
+                           coalesce(r.dataset, '') AS dataset,
+                           coalesce(r.metrics_improvement, '') AS metrics_improvement,
+                           coalesce(r.reason, '') AS reason
+                    """
+                    rel_result = await session.run(rel_cypher, ids=list(node_ids))
+                    rels = await rel_result.data()
+
+                    relationships = []
+                    seen_rels = set()
+                    for r in rels:
+                        start_id = r.get("start") or ""
+                        end_id = r.get("end") or ""
+                        rel_type = r.get("type", "")
+                        rel_key = f"{start_id}-{end_id}-{rel_type}"
+                        if rel_key not in seen_rels:
+                            seen_rels.add(rel_key)
+                            relationships.append({
+                                "id": rel_key,
+                                "type": rel_type,
+                                "start": start_id,
+                                "end": end_id,
+                                "properties": {
+                                    "dataset": r.get("dataset", ""),
+                                    "metrics_improvement": r.get("metrics_improvement", ""),
+                                    "reason": r.get("reason", ""),
+                                },
+                            })
+
+                    return {"nodes": nodes, "relationships": relationships}
+
+                return {"nodes": [], "relationships": []}
+
+        except Exception as e:
+            logger.error("Failed to get subgraph: %s", e)
+            return {"nodes": [], "relationships": []}
+
+    async def get_graph_overview(self) -> Dict[str, Any]:
+        """
+        获取图谱全局统计.
+
+        Returns:
+            统计信息字典
+        """
+        try:
+            if self._driver is None:
+                await self.connect()
+            async with self._driver.session() as session:
+                # Node counts by type
+                node_counts_res = await session.run(
+                    """
+                    MATCH (n)
+                    RETURN labels(n)[0] AS label, count(n) AS count
+                    ORDER BY count DESC
+                    """
+                )
+                node_counts = await node_counts_res.data()
+
+                # Relationship counts by type
+                rel_counts_res = await session.run(
+                    """
+                    MATCH ()-[r]->()
+                    RETURN type(r) AS rel_type, count(r) AS count
+                    ORDER BY count DESC
+                    """
+                )
+                rel_counts = await rel_counts_res.data()
+
+                # Longest evolution path
+                path_res = await session.run(
+                    """
+                    MATCH p = (m1:Method)-[:EVOLVED_FROM*]->(m2:Method)
+                    WHERE NOT ()-[:EVOLVED_FROM]->(m1))
+                      AND NOT (m2)-[:EVOLVED_FROM]->()
+                    RETURN length(p) AS path_length,
+                           [n IN nodes(p) | coalesce(n.original_name, n.name)] AS methods
+                    ORDER BY path_length DESC
+                    LIMIT 1
+                    """
+                )
+                longest_path = await path_res.single()
+
+                # Most published methods
+                method_papers_res = await session.run(
+                    """
+                    MATCH (p:Paper)-[:PROPOSES]->(m:Method)
+                    WITH m, count(p) AS paper_count,
+                         collect(p.title)[0] AS sample_title
+                    RETURN coalesce(m.original_name, m.name) AS method_name,
+                           paper_count, sample_title
+                    ORDER BY paper_count DESC
+                    LIMIT 5
+                    """
+                )
+                method_papers = await method_papers_res.data()
+
+                # Most active authors
+                author_papers_res = await session.run(
+                    """
+                    MATCH (p:Paper)-[:WRITTEN_BY]->(a:Author)
+                    WITH a, count(p) AS paper_count
+                    RETURN coalesce(a.original_name, a.name) AS author_name, paper_count
+                    ORDER BY paper_count DESC
+                    LIMIT 5
+                    """
+                )
+                author_papers = await author_papers_res.data()
+
+                return {
+                    "node_counts": [
+                        {"label": r["label"], "count": r["count"]}
+                        for r in node_counts
+                    ],
+                    "rel_counts": [
+                        {"type": r["rel_type"], "count": r["count"]}
+                        for r in rel_counts
+                    ],
+                    "longest_evolution_path": {
+                        "length": longest_path.get("path_length", 0) if longest_path else 0,
+                        "methods": longest_path.get("methods", []) if longest_path else [],
+                    } if longest_path else {"length": 0, "methods": []},
+                    "top_methods_by_papers": method_papers,
+                    "top_authors_by_papers": author_papers,
+                }
+
+        except Exception as e:
+            logger.error("Failed to get graph overview: %s", e)
+            return {
+                "node_counts": [],
+                "rel_counts": [],
+                "longest_evolution_path": {"length": 0, "methods": []},
+                "top_methods_by_papers": [],
+                "top_authors_by_papers": [],
+            }
+
     @staticmethod
     async def _merge_method_alias_in_tx(tx: Any, primary: str, alias: str) -> bool:
         """

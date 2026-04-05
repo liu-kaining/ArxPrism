@@ -4,8 +4,11 @@ import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   evolutionApi,
+  graphApi,
   type EvolutionMethodEntry,
   type EvolutionTreeLink,
+  type MethodDetail,
+  type MethodPaper,
 } from "@/lib/api/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -14,6 +17,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Search, GitBranch } from "lucide-react";
 import toast from "react-hot-toast";
 import { EvolutionGraphView } from "@/components/graph/EvolutionGraphView";
+import { MethodDetailPanel, MethodPapersPanel } from "@/components/graph/MethodDetailPanel";
 
 interface EvolutionNode {
   id: string;
@@ -38,6 +42,16 @@ function EvolutionPageContent() {
   const [otherMethods, setOtherMethods] = useState<EvolutionMethodEntry[]>(
     []
   );
+
+  // Detail panel state
+  const [selectedMethod, setSelectedMethod] = useState<MethodDetail | null>(null);
+  const [detailPanelOpen, setDetailPanelOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  // Papers panel state
+  const [papersPanelOpen, setPapersPanelOpen] = useState(false);
+  const [methodPapers, setMethodPapers] = useState<MethodPaper[]>([]);
+  const [papersMethodName, setPapersMethodName] = useState("");
 
   const searchEvolution = async (method: string, displayLabel?: string) => {
     const key = method.trim();
@@ -68,6 +82,40 @@ function EvolutionPageContent() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Handle clicking on a method node to show details
+  const handleNodeClick = async (nodeId: string, nodeName: string) => {
+    setDetailLoading(true);
+    try {
+      const details = await graphApi.getMethodDetails(nodeId);
+      setSelectedMethod(details);
+      setDetailPanelOpen(true);
+    } catch (err) {
+      toast.error(`Failed to load details for "${nodeName}"`);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  // Handle viewing papers for a method
+  const handleViewPapers = async (methodNameKey: string) => {
+    setDetailPanelOpen(false);
+    setPapersPanelOpen(true);
+    setPapersMethodName(methodNameKey);
+    try {
+      const result = await graphApi.getMethodPapers(methodNameKey);
+      setMethodPapers(result.papers);
+    } catch (err) {
+      toast.error("Failed to load papers");
+      setMethodPapers([]);
+    }
+  };
+
+  // Handle viewing evolution tree for a method
+  const handleViewEvolution = (methodNameKey: string) => {
+    setDetailPanelOpen(false);
+    searchEvolution(methodNameKey);
   };
 
   useEffect(() => {
@@ -276,33 +324,52 @@ function EvolutionPageContent() {
 
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
-                自上而下时间瀑布：上方为代数更小的祖先脉络，中间为目标方法，下方为其架构所启发的后继；可在画布区域滚动浏览。
+                自上而下时间瀑布：上方为代数更小的祖先脉络，中间为目标方法，下方为其架构所启发的后继；可在画布区域滚动浏览。点击节点查看详情。
               </p>
-              <EvolutionGraphView
-                nodes={nodes}
-                links={links}
-                height={520}
-                showMiniMap
-              />
+              <div className="relative">
+                <EvolutionGraphView
+                  nodes={nodes}
+                  links={links}
+                  height={520}
+                  showMiniMap
+                  onNodeClick={handleNodeClick}
+                />
+                {/* Detail Panel */}
+                <MethodDetailPanel
+                  method={selectedMethod}
+                  isOpen={detailPanelOpen}
+                  onClose={() => setDetailPanelOpen(false)}
+                  onViewEvolution={handleViewEvolution}
+                  onViewPapers={handleViewPapers}
+                />
+                {/* Papers Panel */}
+                <MethodPapersPanel
+                  methodName={papersMethodName}
+                  papers={methodPapers}
+                  isOpen={papersPanelOpen}
+                  onClose={() => setPapersPanelOpen(false)}
+                />
+              </div>
             </div>
 
             {/* Node List */}
             <div className="mt-6">
-              <h4 className="font-medium mb-3">方法列表</h4>
+              <h4 className="font-medium mb-3">方法列表（点击查看详情）</h4>
               <div className="flex flex-wrap gap-2">
                 {nodes.map((node) => (
-                  <span
+                  <button
                     key={node.id}
-                    className={`px-3 py-1 rounded-full text-sm ${
+                    onClick={() => handleNodeClick(node.id, node.name)}
+                    className={`px-3 py-1 rounded-full text-sm transition-colors ${
                       node.generation === 0
                         ? "bg-primary text-primary-foreground"
                         : node.generation < 0
-                        ? "bg-secondary text-secondary-foreground"
-                        : "bg-accent"
+                        ? "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                        : "bg-accent hover:bg-accent/80"
                     }`}
                   >
                     {node.name}
-                  </span>
+                  </button>
                 ))}
               </div>
             </div>

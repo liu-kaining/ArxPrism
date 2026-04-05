@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Background,
   Controls,
@@ -18,6 +18,7 @@ import {
   type ApiGraphRel,
 } from "@/lib/graph/paperGraphFlow";
 import { commandCenterNodeTypes } from "./graphNodes";
+import { labeledEdgeTypes } from "./LabeledEdge";
 
 function FitView({ layoutKey }: { layoutKey: string }) {
   const { fitView } = useReactFlow();
@@ -36,6 +37,7 @@ type Props = {
   height: number;
   showMiniMap?: boolean;
   className?: string;
+  onNodeClick?: (node: ApiGraphNode) => void;
 };
 
 function paperGraphDataSignature(
@@ -55,6 +57,7 @@ function PaperGraphInner({
   relationships,
   height,
   showMiniMap,
+  onNodeClick,
 }: Props) {
   /** 仅用拓扑签名驱动 layout，避免父组件每次 render 传入新数组引用导致死循环 */
   const dataSignature = useMemo(
@@ -76,13 +79,28 @@ function PaperGraphInner({
 
   const layoutKey = dataSignature;
 
+  const handleNodeClick = useCallback(
+    (_event: React.MouseEvent, node: { id: string }) => {
+      if (onNodeClick) {
+        // Find the original graph node
+        const graphNode = graphNodes.find((n) => n.id === node.id);
+        if (graphNode) {
+          onNodeClick(graphNode);
+        }
+      }
+    },
+    [onNodeClick, graphNodes]
+  );
+
   return (
     <ReactFlow
       nodes={nodes}
       edges={edges}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
+      onNodeClick={handleNodeClick}
       nodeTypes={commandCenterNodeTypes}
+      edgeTypes={labeledEdgeTypes}
       minZoom={0.12}
       maxZoom={1.5}
       proOptions={{ hideAttribution: true }}
@@ -108,6 +126,7 @@ export function PaperGraphView({
   height,
   showMiniMap = true,
   className,
+  onNodeClick,
 }: Props) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -139,6 +158,7 @@ export function PaperGraphView({
           relationships={relationships}
           height={height}
           showMiniMap={showMiniMap}
+          onNodeClick={onNodeClick}
         />
       </ReactFlowProvider>
     </div>

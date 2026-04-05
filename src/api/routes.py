@@ -410,3 +410,198 @@ async def get_paper_detail(arxiv_id: str) -> APIResponse:
     except Exception as e:
         logger.error("Failed to fetch paper detail: %s", e)
         raise HTTPException(status_code=500, detail=f"Paper detail fetch failed: {str(e)}")
+
+
+@router.get("/graph/method/{method_name}", response_model=APIResponse)
+async def get_method_details(method_name: str) -> APIResponse:
+    """
+    获取方法的完整详情.
+
+    GET /api/v1/graph/method/{method_name}
+
+    返回方法的完整信息：
+    - 基本信息：name, core_architecture, key_innovations, limitations
+    - 相关论文：该方法被哪些论文提出、对比
+    - 进化统计：祖先数、后代数、IMPROVES_UPON 边数
+
+    Args:
+        method_name: Method.name (归一化键) 或 original_name
+
+    Returns:
+        Method detail with papers and evolution stats
+    """
+    logger.info("Fetching method details: method_name=%s", method_name)
+
+    try:
+        data = await neo4j_client.get_method_details(method_name)
+
+        if not data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Method '{method_name}' not found"
+            )
+
+        return APIResponse(code=200, message="success", data=data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to fetch method details: %s", e)
+        raise HTTPException(status_code=500, detail=f"Method details fetch failed: {str(e)}")
+
+
+@router.get("/graph/method/{method_name}/papers", response_model=APIResponse)
+async def get_method_papers(method_name: str) -> APIResponse:
+    """
+    获取与指定方法相关的所有论文.
+
+    GET /api/v1/graph/method/{method_name}/papers
+
+    Args:
+        method_name: Method.name (归一化键)
+
+    Returns:
+        相关论文列表（包含关系类型）
+    """
+    logger.info("Fetching method papers: method_name=%s", method_name)
+
+    try:
+        papers = await neo4j_client.get_method_papers(method_name)
+
+        return APIResponse(
+            code=200,
+            message="success",
+            data={
+                "method_name": method_name,
+                "papers": papers,
+                "total": len(papers),
+            }
+        )
+
+    except Exception as e:
+        logger.error("Failed to fetch method papers: %s", e)
+        raise HTTPException(status_code=500, detail=f"Method papers fetch failed: {str(e)}")
+
+
+@router.get("/graph/method/{method_name}/evolution", response_model=APIResponse)
+async def get_method_evolution(
+    method_name: str,
+    depth: int = Query(2, ge=1, le=5, description="展开的世代数"),
+    direction: str = Query("both", description="ancestors | descendants | both")
+) -> APIResponse:
+    """
+    展开方法的额外进化世代.
+
+    GET /api/v1/graph/method/{method_name}/evolution?depth=2&direction=both
+
+    Args:
+        method_name: Method.name (归一化键)
+        depth: 展开深度 (1-5)
+        direction: ancestors | descendants | both
+
+    Returns:
+        额外的节点和边
+    """
+    logger.info("Fetching method evolution: method=%s, depth=%d, direction=%s",
+                method_name, depth, direction)
+
+    try:
+        if direction not in ("ancestors", "descendants", "both"):
+            direction = "both"
+
+        data = await neo4j_client.get_method_evolution(
+            method_name=method_name,
+            depth=depth,
+            direction=direction
+        )
+
+        return APIResponse(
+            code=200,
+            message="success",
+            data={
+                "method_name": method_name,
+                "depth": depth,
+                "direction": direction,
+                "nodes": data.get("nodes", []),
+                "links": data.get("links", []),
+            }
+        )
+
+    except Exception as e:
+        logger.error("Failed to fetch method evolution: %s", e)
+        raise HTTPException(status_code=500, detail=f"Method evolution fetch failed: {str(e)}")
+
+
+@router.get("/graph/subgraph", response_model=APIResponse)
+async def get_subgraph(
+    center: str = Query(..., description="中心节点ID (arxiv_id 或 name)"),
+    depth: int = Query(2, ge=1, le=4, description="展开深度"),
+    node_types: str = Query("", description="逗号分隔的节点类型，如 Paper,Method")
+) -> APIResponse:
+    """
+    从指定节点展开 n-hop 子图.
+
+    GET /api/v1/graph/subgraph?center={node_id}&depth=2&node_types=Paper,Method
+
+    Args:
+        center: 中心节点ID
+        depth: 展开深度 (1-4)
+        node_types: 逗号分隔的节点类型过滤
+
+    Returns:
+        子图的节点和边
+    """
+    logger.info("Fetching subgraph: center=%s, depth=%d, types=%s",
+                center, depth, node_types)
+
+    try:
+        types = [t.strip() for t in node_types.split(",") if t.strip()] if node_types else None
+
+        data = await neo4j_client.get_subgraph(
+            center_node_id=center,
+            depth=depth,
+            node_types=types
+        )
+
+        return APIResponse(
+            code=200,
+            message="success",
+            data={
+                "center": center,
+                "depth": depth,
+                "nodes": data.get("nodes", []),
+                "relationships": data.get("relationships", []),
+            }
+        )
+
+    except Exception as e:
+        logger.error("Failed to fetch subgraph: %s", e)
+        raise HTTPException(status_code=500, detail=f"Subgraph fetch failed: {str(e)}")
+
+
+@router.get("/graph/overview", response_model=APIResponse)
+async def get_graph_overview() -> APIResponse:
+    """
+    获取图谱全局统计概览.
+
+    GET /api/v1/graph/overview
+
+    返回：
+    - 总节点数（按类型分布）
+    - 总边数（按类型分布）
+    - 方法演进最长路径
+    - 论文数量最多的方法/作者
+
+    Returns:
+        图谱统计信息
+    """
+    logger.info("Fetching graph overview")
+
+    try:
+        data = await neo4j_client.get_graph_overview()
+
+        return APIResponse(code=200, message="success", data=data)
+
+    except Exception as e:
+        logger.error("Failed to fetch graph overview: %s", e)
+        raise HTTPException(status_code=500, detail=f"Graph overview fetch failed: {str(e)}")

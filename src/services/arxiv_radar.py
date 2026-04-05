@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 import arxiv
 import httpx
+import redis.asyncio as aioredis
 from bs4 import BeautifulSoup
 from markdownify import markdownify
 
@@ -152,9 +153,87 @@ class ArxivRadar:
     3. Summary（API 兜底）
     """
 
+    # Redis key for global rate limiting lock
+    _ARXIV_GLOBAL_LOCK_KEY = "arxiv_global_fetch_lock"
+    # Lock TTL in milliseconds (3 seconds)
+    _ARXIV_LOCK_TTL_MS = 3000
+    # Poll interval when lock is held by another worker
+    _ARXIV_LOCK_POLL_INTERVAL = 0.5  # seconds
+
     def __init__(self) -> None:
         self.rate_limit_delay = settings.arxiv_rate_limit_delay  # 3 秒间隔
         self.min_content_length = settings.arxiv_min_content_length  # 500 字符
+        self.user_agent = settings.arxiv_user_agent
+        self._redis: Optional[aioredis.Redis] = None
+
+    async def _get_redis(self) -> Optional[aioredis.Redis]:
+        """Get or create Redis connection."""
+        if self._redis is None:
+            try:
+                self._redis = aioredis.from_url(
+                    settings.redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                )
+                # Test connection
+                await self._redis.ping()
+            except Exception as e:
+                logger.warning("Failed to connect to Redis for rate limiting: %s", e)
+                self._redis = None
+        return self._redis
+
+    async def _global_rate_limit_wait(self) -> None:
+        """
+        全局分布式限流等待。
+
+        使用 Redis SETNX 实现集群级别的互斥锁，确保所有 Worker 对 arXiv 的并发请求
+        严格遵守 3 秒间隔（君子协定）。
+
+        实现逻辑：
+        - 尝试获取锁：SET arxiv_global_fetch_lock 1 NX PX=3000
+        - 如果成功（拿到了锁），直接 return，允许发起 HTTP 请求
+        - 如果失败（锁被其他 Worker 占用），sleep 0.5s 后继续循环尝试
+
+        降级策略：如果 Redis 不可用（连接失败），回退到本地单机 sleep，
+        不让整个抓取直接崩溃。
+        """
+        redis = await self._get_redis()
+
+        if redis is None:
+            # Redis 不可用，降级回退到本地单机 sleep
+            logger.warning(
+                "Redis unavailable for global rate limiting, falling back to local sleep"
+            )
+            await asyncio.sleep(self.rate_limit_delay)
+            return
+
+        # 分布式锁获取循环
+        while True:
+            try:
+                # 尝试原子性地获取锁：SET key value NX PX milliseconds
+                # 返回 True 仅在 key 不存在且成功设置时（即获取到锁）
+                acquired = await redis.set(
+                    self._ARXIV_GLOBAL_LOCK_KEY,
+                    "1",
+                    nx=True,  # Only set if Not eXists
+                    px=self._ARXIV_LOCK_TTL_MS,  # 3 seconds TTL, auto-release
+                )
+
+                if acquired:
+                    # 成功获取到锁，允许发起 HTTP 请求
+                    return
+
+                # 锁被其他 Worker 占用，等待后重试
+                await asyncio.sleep(self._ARXIV_LOCK_POLL_INTERVAL)
+
+            except Exception as e:
+                # Redis 操作异常（如连接断开），降级回退
+                logger.warning(
+                    "Redis rate limit operation failed, falling back to local sleep: %s",
+                    e,
+                )
+                await asyncio.sleep(self.rate_limit_delay)
+                return
 
     async def fetch_recent_papers(
         self,
@@ -350,8 +429,10 @@ class ArxivRadar:
                 )
             return None
 
-        # Step 3: Rate limiting (arXiv 君子协定) — 仅在即将发起 HTTP 请求时等待
-        await asyncio.sleep(self.rate_limit_delay)
+        # Step 3: 全局分布式限流（arXiv 君子协定）
+        # 仅在即将发起 HTTP 请求（HTML/PDF 下载）时等待
+        # 使用 Redis SETNX 实现集群级别互斥锁，确保所有 Worker 遵守 3 秒间隔
+        await self._global_rate_limit_wait()
 
         # Step 4: 尝试获取全文 (HTML-First -> PDF 兜底 -> Summary)
         content = await self._fetch_paper_content(paper)
@@ -479,7 +560,11 @@ class ArxivRadar:
 
         try:
             logger.info("Downloading PDF (temp): %s", pdf_url)
-            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=120,
+                follow_redirects=True,
+                headers={"User-Agent": self.user_agent},
+            ) as client:
                 response = await client.get(pdf_url)
                 response.raise_for_status()
 
@@ -574,7 +659,11 @@ class ArxivRadar:
             提取的文本内容，失败返回 None
         """
         try:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=30,
+                follow_redirects=True,
+                headers={"User-Agent": self.user_agent},
+            ) as client:
                 response = await client.get(html_url)
                 response.raise_for_status()
                 html = response.text

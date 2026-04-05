@@ -66,6 +66,13 @@ export function EvolutionHoverEdge({
     ? d.datasets.filter(Boolean)
     : [];
 
+  // Determine edge color based on relationship type
+  const edgeColor = rel === "EVOLVED_FROM"
+    ? "#a855f7" // purple for EVOLVED_FROM
+    : rel === "IMPROVES_UPON"
+      ? "#f97316" // orange for IMPROVES_UPON
+      : "#06b6d4"; // cyan for other relationships
+
   return (
     <>
       <g
@@ -86,16 +93,30 @@ export function EvolutionHoverEdge({
           markerEnd={markerEnd}
           style={{
             ...style,
-            stroke,
+            stroke: hover ? edgeColor : "#78716c",
             strokeWidth,
             transition: "stroke 0.15s ease, stroke-width 0.15s ease",
           }}
         />
       </g>
       <EdgeLabelRenderer>
+        {/* Always-visible edge label */}
+        <div
+          className="nodrag nopan pointer-events-none rounded px-1.5 py-0.5 text-[9px] font-mono font-medium"
+          style={{
+            position: "absolute",
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            backgroundColor: "rgba(15, 15, 15, 0.85)",
+            color: edgeColor,
+            border: `1px solid ${edgeColor}40`,
+          }}
+        >
+          {rel}
+        </div>
+        {/* Enhanced hover tooltip with more info */}
         {hover ? (
           <div
-            className="nodrag nopan pointer-events-none max-w-[min(92vw,320px)] rounded-lg border border-amber-300/90 bg-stone-950/95 px-3 py-2 text-left shadow-xl shadow-amber-900/25 ring-1 ring-violet-500/20"
+            className="nodrag nopan pointer-events-none max-w-[min(92vw,340px)] rounded-lg border border-amber-300/90 bg-stone-950/95 px-3 py-2 text-left shadow-xl shadow-amber-900/25 ring-1 ring-violet-500/20"
             style={{
               position: "absolute",
               transform: `translate(-50%, -100%) translate(${labelX}px,${labelY - 10}px)`,
@@ -103,8 +124,13 @@ export function EvolutionHoverEdge({
           >
             {reason || at ? (
               <>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
-                  [Evolution Reason]
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                    [Evolution Reason]
+                  </div>
+                  <div className="font-mono text-[9px] text-stone-500">
+                    {rel}
+                  </div>
                 </div>
                 <p className="mt-1 text-[12px] font-medium leading-snug text-stone-100">
                   {reason || "—"}
@@ -117,9 +143,15 @@ export function EvolutionHoverEdge({
               </>
             ) : dsEdge || metEdge ? (
               <>
-                <div className="font-mono text-[10px] text-stone-400">{rel}</div>
+                <div className="flex items-center gap-2">
+                  <div className="font-mono text-[10px] text-orange-400">{rel}</div>
+                  {dsEdge ? (
+                    <span className="rounded bg-orange-900/60 px-1 py-0.5 font-mono text-[9px] text-orange-200">
+                      {dsEdge}
+                    </span>
+                  ) : null}
+                </div>
                 <p className="mt-1 text-[11px] text-stone-200">
-                  {dsEdge ? `[${dsEdge}] ` : ""}
                   {metEdge || "—"}
                 </p>
               </>

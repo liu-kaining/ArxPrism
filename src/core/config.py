@@ -70,6 +70,9 @@ class Settings(BaseSettings):
 
     # arXiv 配置
     arxiv_rate_limit_delay: float = 3.0  # arXiv 君子协定: 3秒间隔
+    arxiv_user_agent: str = Field(
+        default="ArxPrism/3.1 (mailto: your-email@example.com)"
+    )
     arxiv_min_content_length: int = 500  # 最小内容长度阈值
     # 单次任务从 arXiv API 最多遍历多少条候选（分页累加）；前若干篇已在库时会继续向后翻直到凑满 max_results 或触顶
     arxiv_max_scan_per_task: int = 500
