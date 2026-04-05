@@ -86,7 +86,7 @@ export function NodeDetailPanel({
   };
 
   return (
-    <div className="absolute right-0 top-0 z-50 h-full w-96 overflow-y-auto border-l border-stone-300 bg-stone-50 shadow-lg">
+    <div className="absolute right-0 top-0 z-50 h-full w-80 overflow-y-auto border-l border-stone-300 bg-stone-50 shadow-lg">
       {/* Header */}
       <div className="sticky top-0 flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-3">
         <div className="flex items-center gap-2">

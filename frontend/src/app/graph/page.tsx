@@ -160,15 +160,15 @@ function GraphPageContent() {
   const getEdgeColor = (edgeType: string): string => {
     const colors: Record<string, string> = {
       PROPOSES: "#06b6d4",      // cyan
-      WRITTEN_BY: "#3b82f6",    // blue
-      ADDRESSES: "#f59e0b",     // amber
-      EVALUATED_ON: "#eab308",  // yellow
-      APPLIED_TO: "#a855f7",    // purple
-      IMPROVES_UPON: "#f97316", // orange
-      EVOLVED_FROM: "#a855f7",  // purple
-      MEASURES: "#ec4899",      // pink
+      WRITTEN_BY: "#2563eb",    // blue
+      ADDRESSES: "#d97706",     // amber
+      EVALUATED_ON: "#ca8a04",  // yellow
+      APPLIED_TO: "#7c3aed",    // violet
+      IMPROVES_UPON: "#ea580c",  // orange
+      EVOLVED_FROM: "#c026d3",  // fuchsia
+      MEASURES: "#db2777",      // pink
     };
-    return colors[edgeType] || "#78716c";
+    return colors[edgeType] || "#475569";
   };
 
   return (
@@ -330,11 +330,11 @@ function GraphPageContent() {
                 可拖拽画布、缩放；点击节点查看详情或展开子图。共 {filteredNodes.length} 个节点、
                 {filteredRelationships.length} 条关系
               </p>
-              <div className="relative">
+              <div className={`relative ${detailPanelOpen ? "pr-96" : ""}`}>
                 <PaperGraphView
                   graphNodes={filteredNodes}
                   relationships={filteredRelationships}
-                  height={520}
+                  height={600}
                   showMiniMap
                   onNodeClick={handleNodeClick}
                 />

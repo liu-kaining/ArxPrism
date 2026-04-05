@@ -326,11 +326,11 @@ function EvolutionPageContent() {
               <p className="text-sm text-muted-foreground">
                 自上而下时间瀑布：上方为代数更小的祖先脉络，中间为目标方法，下方为其架构所启发的后继；可在画布区域滚动浏览。点击节点查看详情。
               </p>
-              <div className="relative">
+              <div className={`relative ${detailPanelOpen || papersPanelOpen ? "pr-96" : ""}`}>
                 <EvolutionGraphView
                   nodes={nodes}
                   links={links}
-                  height={520}
+                  height={600}
                   showMiniMap
                   onNodeClick={handleNodeClick}
                 />

@@ -66,11 +66,11 @@ export function EvolutionHoverEdge({
     ? d.datasets.filter(Boolean)
     : [];
 
-  // Determine edge color based on relationship type
+  // Determine edge color based on relationship type (bright colors)
   const edgeColor = rel === "EVOLVED_FROM"
-    ? "#a855f7" // purple for EVOLVED_FROM
+    ? "#c026d3" // fuchsia for EVOLVED_FROM
     : rel === "IMPROVES_UPON"
-      ? "#f97316" // orange for IMPROVES_UPON
+      ? "#ea580c" // orange for IMPROVES_UPON
       : "#06b6d4"; // cyan for other relationships
 
   return (

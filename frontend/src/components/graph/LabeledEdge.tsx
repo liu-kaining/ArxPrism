@@ -6,17 +6,17 @@ export type LabeledEdgePayload = {
   edgeType: string;
 };
 
-// Edge colors by relationship type
+// Edge colors by relationship type (bright colors)
 const EDGE_COLORS: Record<string, string> = {
   PROPOSES: "#06b6d4",      // cyan
-  WRITTEN_BY: "#3b82f6",    // blue
-  ADDRESSES: "#f59e0b",     // amber
-  EVALUATED_ON: "#eab308",  // yellow
-  APPLIED_TO: "#a855f7",    // purple
-  IMPROVES_UPON: "#f97316", // orange
-  EVOLVED_FROM: "#a855f7",  // purple
-  MEASURES: "#ec4899",      // pink
-  DEFAULT: "#78716c",        // stone
+  WRITTEN_BY: "#2563eb",    // blue
+  ADDRESSES: "#d97706",     // amber
+  EVALUATED_ON: "#ca8a04",  // yellow
+  APPLIED_TO: "#7c3aed",    // violet
+  IMPROVES_UPON: "#ea580c",  // orange
+  EVOLVED_FROM: "#c026d3",  // fuchsia
+  MEASURES: "#db2777",      // pink
+  DEFAULT: "#475569",       // slate
 };
 
 function getEdgeColor(edgeType: string): string {
@@ -66,9 +66,10 @@ export function LabeledEdge({
           style={{
             position: "absolute",
             transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-            backgroundColor: "rgba(15, 15, 15, 0.9)",
+            backgroundColor: "rgba(255, 255, 255, 0.95)",
             color: color,
-            border: `1px solid ${color}50`,
+            border: `1.5px solid ${color}`,
+            boxShadow: `0 1px 4px rgba(0,0,0,0.15)`,
             whiteSpace: "nowrap",
           }}
         >
