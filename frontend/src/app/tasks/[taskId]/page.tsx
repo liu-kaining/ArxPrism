@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useTaskStore } from "@/lib/stores/taskStore";
 import { Button } from "@/components/ui/Button";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Progress } from "@/components/ui/Progress";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -15,6 +16,7 @@ import {
   X,
   RotateCcw,
   AlertCircle,
+  AlertTriangle,
   BookOpen,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
@@ -34,6 +36,8 @@ export default function TaskDetailPage() {
     retryTask,
     taskDetailLoading,
   } = useTaskStore();
+
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   // 必须用 focusDetail，否则 store 里 refreshCurrent 为 false，永远不会写入 currentTask
   useEffect(() => {
@@ -74,13 +78,13 @@ export default function TaskDetailPage() {
     }
   };
 
-  const handleCancel = async () => {
-    if (!confirm("确定要取消该任务吗？")) return;
+  const confirmCancelTask = async () => {
     try {
       await cancelTask(taskId);
       toast.success("任务已取消");
     } catch {
       toast.error("取消失败");
+      throw new Error("cancel failed");
     }
   };
 
@@ -93,23 +97,48 @@ export default function TaskDetailPage() {
     }
   };
 
+  const cancelModal = (
+    <ConfirmModal
+      open={cancelConfirmOpen}
+      onClose={() => setCancelConfirmOpen(false)}
+      title="取消任务"
+      description="确定要取消该任务吗？进度将停止，且不可恢复。"
+      cancelLabel="保留任务"
+      confirmLabel="确认取消"
+      confirmVariant="destructive"
+      icon={
+        <AlertTriangle
+          className="h-9 w-9 text-amber-600"
+          aria-hidden
+        />
+      }
+      onConfirm={confirmCancelTask}
+    />
+  );
+
   if (taskDetailLoading || (currentTask && currentTask.task_id !== taskId)) {
     return (
+      <Fragment>
       <div className="warm-page space-y-6">
         <Skeleton className="h-12 w-64 rounded-lg bg-muted" />
         <Skeleton className="h-48 w-full rounded-xl bg-muted" />
       </div>
+      {cancelModal}
+      </Fragment>
     );
   }
 
   if (!currentTask) {
     return (
+      <Fragment>
       <div className="warm-page py-12 text-center">
         <p className="text-destructive">任务不存在</p>
         <Link href="/papers" className="mt-4 inline-block">
           <Button variant="outline">返回论文列表</Button>
         </Link>
       </div>
+      {cancelModal}
+      </Fragment>
     );
   }
 
@@ -118,6 +147,7 @@ export default function TaskDetailPage() {
   const StatusIcon = status.icon;
 
   return (
+    <Fragment>
     <div className="warm-page space-y-6">
       {/* Header */}
       <div className="flex items-start gap-4">
@@ -213,7 +243,10 @@ export default function TaskDetailPage() {
               </Button>
             )}
             {task.can_cancel && (
-              <Button variant="outline" onClick={handleCancel}>
+              <Button
+                variant="outline"
+                onClick={() => setCancelConfirmOpen(true)}
+              >
                 <X className="w-4 h-4 mr-2" />
                 取消
               </Button>
@@ -296,5 +329,7 @@ export default function TaskDetailPage() {
         </CardContent>
       </Card>
     </div>
+    {cancelModal}
+    </Fragment>
   );
 }

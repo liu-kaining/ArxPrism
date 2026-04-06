@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { Task } from "@/lib/api/client";
 import { useTaskStore } from "@/lib/stores/taskStore";
 import { Button } from "@/components/ui/Button";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { Progress } from "@/components/ui/Progress";
 import {
   Pause,
@@ -13,6 +14,7 @@ import {
   RotateCcw,
   ExternalLink,
   AlertCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { formatDateTime, truncate } from "@/lib/utils";
 import { taskStatusUi } from "@/lib/task-status";
@@ -26,6 +28,7 @@ interface TaskProgressCardProps {
 export default function TaskProgressCard({ task, compact = false }: TaskProgressCardProps) {
   const { fetchTask, pauseTask, resumeTask, cancelTask, retryTask } = useTaskStore();
   const [isPolling, setIsPolling] = useState(false);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
 
   const status = taskStatusUi[task.status];
   const StatusIcon = status.icon;
@@ -67,13 +70,13 @@ export default function TaskProgressCard({ task, compact = false }: TaskProgress
     }
   };
 
-  const handleCancel = async () => {
-    if (!confirm("确定要取消该任务吗？")) return;
+  const confirmCancelTask = async () => {
     try {
       await cancelTask(task.task_id);
       toast.success("任务已取消");
     } catch {
       toast.error("取消失败");
+      throw new Error("cancel failed");
     }
   };
 
@@ -86,8 +89,28 @@ export default function TaskProgressCard({ task, compact = false }: TaskProgress
     }
   };
 
+  const cancelModal = (
+    <ConfirmModal
+      open={cancelConfirmOpen}
+      onClose={() => setCancelConfirmOpen(false)}
+      title="取消任务"
+      description="确定要取消该任务吗？进度将停止，且不可恢复。"
+      cancelLabel="保留任务"
+      confirmLabel="确认取消"
+      confirmVariant="destructive"
+      icon={
+        <AlertTriangle
+          className="h-9 w-9 text-amber-600"
+          aria-hidden
+        />
+      }
+      onConfirm={confirmCancelTask}
+    />
+  );
+
   if (compact) {
     return (
+      <Fragment>
       <div className="flex items-center justify-between p-3 rounded-lg border">
         <div className="flex items-center gap-3">
           <StatusIcon className={`w-5 h-5 ${status.color}`} />
@@ -120,10 +143,13 @@ export default function TaskProgressCard({ task, compact = false }: TaskProgress
           ) : null}
         </div>
       </div>
+      {cancelModal}
+      </Fragment>
     );
   }
 
   return (
+    <Fragment>
     <div className="p-4 rounded-lg border space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between">
@@ -195,7 +221,11 @@ export default function TaskProgressCard({ task, compact = false }: TaskProgress
           </Button>
         )}
         {task.can_cancel && (
-          <Button variant="outline" size="sm" onClick={handleCancel}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCancelConfirmOpen(true)}
+          >
             <X className="w-4 h-4 mr-1" />
             取消
           </Button>
@@ -230,5 +260,7 @@ export default function TaskProgressCard({ task, compact = false }: TaskProgress
         </div>
       )}
     </div>
+    {cancelModal}
+    </Fragment>
   );
 }
