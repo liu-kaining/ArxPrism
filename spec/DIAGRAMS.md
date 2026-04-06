@@ -1,6 +1,6 @@
 # ArxPrism 架构与核心能力 — Mermaid 图集（细化版）
 
-本文档用 Mermaid 描述部署、组件、**Redis 键空间**、**任务/论文状态机**、**抓取与双道门禁**、**单篇处理全链路**、**Neo4j 与向量检索**、**鉴权与配额**、**管理端 API** 与产品动线。与当前代码一致；实现变更时请同步改本文档。
+本文档用 Mermaid 描述 **用户视角页面动线**、部署、组件、**Redis 键空间**、**任务/论文状态机**、**抓取与双道门禁**、**单篇处理全链路**、**Neo4j 与向量检索**、**鉴权与配额**、**管理端 API** 等。与当前代码一致；实现变更时请同步改本文档。
 
 渲染：GitHub、VS Code（Mermaid 插件）、Notion、语雀等均可识别 ` ```mermaid ` 代码块。
 
@@ -21,6 +21,55 @@
 | 便签 `note*` | `#fef9c3` / `#a16207` | 柔和黄备注，对比足够 |
 
 新增图时请复制任一图中首行 `%%{init: ...}%%`。
+
+---
+
+## 用户视角动线（页面旅程）
+
+从**使用者眼睛**出发：先登录进门，再可选「跑任务把论文写入图库」或「直接浏览已入库」；论文详情是**图谱 / 进化树**的常见入口。与 `middleware.ts` 保护范围、`Navbar` 导航一致。
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+flowchart TB
+    subgraph P1["① 进门（未登录会被拦）"]
+        LG["/login"]
+        HM["/ 首页 · 功能卡片"]
+        LG --> HM
+    end
+
+    subgraph P2["② 生产数据：抓取流水线"]
+        TS["/tasks · 选领域预设 · 创建任务"]
+        TD["/tasks/:taskId · 进度 · 暂停/恢复/取消/重试"]
+        TS --> TD
+        TD --> HM
+        TD --> PL
+    end
+
+    subgraph P3["③ 消费数据：文库与可视化"]
+        PL["/papers · 语义/关键词 · 主题统计"]
+        PD["/papers/:arxivId · 详情 · 中译摘要 · 跳转"]
+        GR["/graph?paper= · 单篇邻域 React Flow"]
+        EV["/evolution?method= · 方法进化树"]
+        PL --> PD
+        PD --> GR
+        PD --> EV
+        PL --> GR
+    end
+
+    subgraph P4["④ 管理员（Navbar 出现「管理」）"]
+        AD["/admin · 用户配额 · 系统参数 · 图导入导出/清空"]
+    end
+
+    HM --> TS
+    HM --> PL
+    HM -.->|role=admin| AD
+```
+
+**说明**
+
+- **首页**可同时去「任务」或「论文」；任务跑完后用户常从 **任务详情** 回到首页或直达 **论文列表**（图中 `TD --> PL` 表示「去看入库结果」的典型路径）。
+- **论文详情**内可点进 **图谱**（同一篇 arXiv）或 **进化树**（依赖 `proposed_method_name_key` / 方法名）。
+- **`/admin`** 不在公共导航里自动出现；需 `profiles.role = admin`（见 `meApi.getMe` + `Navbar`）。
 
 ---
 
@@ -679,6 +728,8 @@ flowchart TB
 ---
 
 ## 19. 前端页面 ↔ 主要 API
+
+**用户先怎么走页面**：见文首 **「用户视角动线」**；本节强调各页对应的 `lib/api/client` 封装。
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
