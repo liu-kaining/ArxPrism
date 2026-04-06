@@ -150,7 +150,7 @@ flowchart LR
     end
 
     subgraph Broker["Celery / 运维"]
-        Q["list key `celery`\nLLEN 粗队列长度"]
+        Q["Redis list: celery\nLLEN 队列长度"]
         ARX["arxiv_global_fetch_lock\nSETNX PX=3000ms\n跨 Worker 3s 间隔"]
     end
 
@@ -169,19 +169,21 @@ flowchart LR
 
 ## 5. 任务状态机（TaskStatus）
 
+边栏仅保留触发意图；细节见正文「任务 API」与 `task_manager` Redis 键。
+
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: create_task\nPOST /api/v1/tasks
-    pending --> running: start_task\nWorker 开始
-    running --> paused: POST .../pause\nSET pause key
-    paused --> running: POST .../resume\nDEL pause key
-    running --> completed: complete_task\n遍历结束
-    running --> failed: fail_task\n未捕获异常
-    pending --> cancelled: cancel\n或 Worker 检测 cancel key
-    running --> cancelled: cancel key
-    paused --> cancelled: cancel while paused
+    [*] --> pending: 创建任务
+    pending --> running: Worker 启动
+    running --> paused: pause
+    paused --> running: resume
+    running --> completed: 正常结束
+    running --> failed: 异常
+    pending --> cancelled: cancel
+    running --> cancelled: cancel
+    paused --> cancelled: cancel
     completed --> [*]
-    failed --> pending: POST .../retry\n重新 dispatch
+    failed --> pending: retry
     cancelled --> [*]
 ```
 
@@ -191,15 +193,17 @@ stateDiagram-v2
 
 ```mermaid
 stateDiagram-v2
-    [*] --> processing: _process_paper_async 开始
-    processing --> skipped: triage 已挡在 Radar\n或 extraction\nis_relevant_to_domain=false
-    processing --> failed: extraction None\nextraction_data 缺失\nNeo4j upsert false\n异常
-    processing --> success: upsert OK
-    failed --> processing: _process_paper_with_one_retry_on_failure\n仅 FAILED 再跑 1 次\nSKIPPED 不重试
+    [*] --> processing: 开始处理
+    processing --> skipped: Radar 分诊拒\n或领域锁 false
+    processing --> failed: 萃取或写入失败
+    processing --> success: upsert 成功
+    failed --> processing: 失败再试 1 次
     success --> [*]
     skipped --> [*]
     failed --> [*]
 ```
+
+说明：仅 `FAILED` 会由 `_process_paper_with_one_retry_on_failure` 再跑一轮；`SKIPPED` 不重试。
 
 ---
 
@@ -236,30 +240,29 @@ sequenceDiagram
     participant SB as Supabase RPC
     participant RD as Redis
     participant CE as Celery
-    participant WK as Worker _execute_task_pipeline
+    participant WK as Worker
     participant RAD as ArxivRadar
-    participant PP as _process_paper_with_one_retry
+    participant PP as paper_retry
 
-    API->>SB: rpc_try_consume_task_quota(user_id)\n创建/重试各 1 点
-    API->>RD: save_task pending + recent list
-    API->>CE: run_task_pipeline_task.delay(task_id, query, preset, max, owner)
+    API->>SB: consume_task_quota
+    API->>RD: save_task pending
+    API->>CE: delay run_task_pipeline
     API-->>API: 201 task_id
 
-    CE->>WK: 执行
-    WK->>RD: start_task → running
-    WK->>RAD: fetch_recent_papers_with_stats\n(内含分诊+抓取+去重)
-    RAD-->>WK: List[PaperContent], ArxivFetchStats
+    CE->>WK: execute_task_pipeline
+    WK->>RD: start_task running
+    WK->>RAD: fetch_recent_papers_with_stats
+    RAD-->>WK: papers stats
 
-    alt 0 篇
-        WK->>RD: complete_task(completion_summary=\n检索0篇/扫满上限等)
-    else 有论文
-        WK->>RD: update_progress(total=len)
-        loop 每一篇
-            WK->>RD: is_cancelled? → return
-            WK->>RD: is_paused? → wait_while_paused
-            WK->>RD: update_progress(current_paper_*)
-            WK->>PP: content_dict + task_id + owner_user_id
-            PP-->>WK: PaperProcessingResult
+    alt zero papers
+        WK->>RD: complete_task summary
+    else has papers
+        WK->>RD: update_progress total
+        loop each paper
+            WK->>RD: check cancel pause
+            WK->>RD: update current paper
+            WK->>PP: process with retry
+            PP-->>WK: result
             WK->>RD: add_paper_result
         end
         WK->>RD: complete_task
@@ -270,6 +273,8 @@ sequenceDiagram
 
 ## 9. 单篇 `_process_paper_async` 详解（Worker）
 
+Mermaid 的 `sequenceDiagram` **不宜**在 `alt` 内再套 `opt`，故拆成单层分支；与代码路径一致。
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -278,27 +283,29 @@ sequenceDiagram
     participant N as neo4j_client
     participant E as Embeddings
 
-    W->>L: extract(paper_text, meta)\nmodel=llm_extractor_model\njson_object + Pydantic\nPaperExtractionResponse
-    alt extraction is None
-        W-->>W: FAILED 重试包装器可再跑 1 次
-    else is_relevant_to_domain == false
-        W->>N: ensure_ingest_tombstone(domain_gatekeeper)
-        W-->>W: SKIPPED
-    else extraction_data missing
+    W->>L: extract Pydantic 校验
+    alt extraction 为空
         W-->>W: FAILED
-    else 继续
-        W->>L: translate_arxiv_abstract_to_zh(summary)
-        W->>W: embed_text = title + core_problem + summary
-        W->>E: generate_embedding(embed_text)\n须 1536 维才写入
-        W->>N: upsert_paper_graph(extraction)\nMERGE 节点/边
-        alt upsert false
+    else 领域 irrelevant
+        W->>N: tombstone domain_gatekeeper
+        W-->>W: SKIPPED
+    else 缺 extraction_data
+        W-->>W: FAILED
+    else 主路径
+        W->>L: translate abstract zh
+        W->>W: 拼 embed 文本
+        W->>E: embedding 1536d
+        W->>N: upsert MERGE
+        alt upsert 失败
             W-->>W: FAILED
-        else OK
-            opt W->>N: record_paper_fetch_contribution\nuser_id + redis_task_id
-            W-->>W: SUCCESS + method_name
+        else upsert 成功
+            W->>N: record contribution
+            W-->>W: SUCCESS
         end
     end
 ```
+
+函数级细节：`extract` 使用 `llm_extractor_model`、`response_format=json_object`；`embedding` 仅当 `len(vec)==1536` 写入；`record_paper_fetch_contribution` 仅在 `owner_user_id` 与 `task_id` 非空时调用。
 
 **注意**：**分诊**在 Radar 下载全文**之前**；**领域锁**在萃取 JSON 内再次约束。两者语义不同：前者省下载与 Token，后者防全文萃取阶段模型误判。
 
@@ -335,7 +342,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     IN["method_name 原始字符串"] --> NORM["_normalize_name\n小写/去后缀/连字符"]
-    NORM --> MATCH["MATCH Method\nm.name = norm\nOR lower(original_name)=lower(raw)"]
+    NORM --> MATCH["MATCH Method\nname 或 original_name 匹配"]
     MATCH --> ANC["祖先: (t)-[:EVOLVED_FROM*1..3]->(a)"]
     MATCH --> DESC["后代: (t)<-[:EVOLVED_FROM*1..3]-(d)"]
     ANC --> GEN["generation 负数=祖先\n正数=后代 0=目标"]
@@ -363,9 +370,9 @@ flowchart TB
 ```mermaid
 flowchart LR
     Q["用户 query"] --> E["Embedding API"]
-    E --> V["Neo4j vector search\npaper_embedding"]
-    V --> F["score >= max(0.42, top_score×0.88)"]
-    F --> R["分页 papers + total"]
+    E --> V["Neo4j vector\npaper_embedding"]
+    V --> F["双阈值过滤\nmin_score 与相对顶分"]
+    F --> R["papers 分页"]
 ```
 
 关键词模式：`search_mode=keyword`，`title/core_problem/method CONTAINS`。
@@ -396,7 +403,7 @@ flowchart TB
     HS -->|alg 非 HS256| JW
     HS --> Profile
     JW --> Profile
-    AT --> require_admin 分支
+    AT --> ADMTOK["admin 令牌校验"]
 ```
 
 ---
@@ -458,7 +465,7 @@ flowchart LR
     end
 
     subgraph ACL["权限"]
-        R["require_user\n任务 404 若 owner≠本人且非 admin"]
+        R["require_user\n非本人非 admin 则 404"]
     end
 
     Write --> ACL
