@@ -2,13 +2,30 @@
 
 本文档用 Mermaid 描述部署、组件、**Redis 键空间**、**任务/论文状态机**、**抓取与双道门禁**、**单篇处理全链路**、**Neo4j 与向量检索**、**鉴权与配额**、**管理端 API** 与产品动线。与当前代码一致；实现变更时请同步改本文档。
 
-渲染：GitHub、VS Code（Mermaid 插件）、Notion、语雀等均可识别 ` ```mermaid ` 块。
+渲染：GitHub、VS Code（Mermaid 插件）、Notion、语雀等均可识别 ` ```mermaid ` 代码块。
+
+### 整体配色（`theme: base` + `themeVariables`）
+
+为避免 Mermaid 默认主题的**黄底 subgraph / 淡紫节点**，全文流程图在首行统一注入 `%%{init: ...}%%`：
+
+| 用途 | 色值 | 说明 |
+|------|------|------|
+| 子图背景 `clusterBkg` | `#f8fafc` | 冷灰 slate-50，替代默认奶黄 |
+| 子图边框 `clusterBorder` | `#e2e8f0` | slate-200 |
+| 主节点 `primaryColor` | `#e0f2fe` | sky-100，与天蓝边框搭配 |
+| 主节点文字 / 边 | `#0c4a6e` / `#0284c7` | sky-900 / sky-600 |
+| 连线 `lineColor` | `#64748b` | slate-500 |
+| 时序图参与者 | 同 sky 系 | `actorBkg` 等与主色一致 |
+| 便签 `note*` | `#fffbeb` + 琥珀边框 | 仅注释块略暖，与产品 amber 点缀一致 |
+
+新增图时请复制任一图中首行 `%%{init: ...}%%`，避免又回到默认配色。
 
 ---
 
 ## 1. 系统上下文（C4 Context，带数据面标注）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TB
     subgraph Users["使用者"]
         U1["研发 / SRE / AIOps"]
@@ -43,11 +60,14 @@ flowchart TB
     WK --> N4j
 ```
 
+
+
 ---
 
 ## 2. 部署拓扑（Docker Compose + 运维参数）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TB
     subgraph Svc["Compose services"]
         FE["frontend\nDockerfile.frontend\nnode 20"]
@@ -79,11 +99,14 @@ flowchart TB
     WK -.->|"compose volumes\n./src:ro → 容器内 src"| DEVVOL["热更新 Worker 代码"]
 ```
 
+
+
 ---
 
 ## 3. 后端分层（文件级依赖）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TB
     subgraph Entry["入口"]
         MAIN["src/main.py\nlifespan: neo4j 重连 + task_manager.connect"]
@@ -135,11 +158,14 @@ flowchart TB
     RAD --> NC
 ```
 
+
+
 ---
 
 ## 4. Redis 键空间（任务与 Celery）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart LR
     subgraph TaskKeys["任务状态 task_manager.py"]
         K1["arxprism:task:{uuid}\nSETEX TASK_TTL=7d\nJSON: Task"]
@@ -165,33 +191,67 @@ flowchart LR
     W --> K5
 ```
 
+
+
 ---
 
 ## 5. 任务状态机（TaskStatus）
 
-边栏仅保留触发意图；细节见正文「任务 API」与 `task_manager` Redis 键。
+`stateDiagram-v2` 自动排版易把 **pause/resume**、**retry** 与 **cancel** 的边叠在一起。下面用 `**flowchart TB` 手工主轴 + 挂起侧枝**，语义与 `TaskStatus` 枚举及 `task_manager` 行为一致。
+
+**触发说明**
+
+- **启动**：`POST` 创建任务后 Worker 执行 `_execute_task_pipeline` → `start_task` → `running`。
+- **pause / resume / cancel**：`POST /api/v1/tasks/{id}/pause|resume|cancel`；cancel 还会在 Redis 写入 `arxprism:task:{id}:cancel`，Worker 循环内检测后中止。
+- **retry**：仅当状态为 `failed` 时 `POST .../retry`，回到 `pending` 并再次 dispatch。
+- **completed**：全部论文处理完或「0 篇可处理」等正常收尾；**failed** 为未捕获异常。
 
 ```mermaid
-stateDiagram-v2
-    [*] --> pending: 创建任务
-    pending --> running: Worker 启动
-    running --> paused: pause
-    paused --> running: resume
-    running --> completed: 正常结束
-    running --> failed: 异常
-    pending --> cancelled: cancel
-    running --> cancelled: cancel
-    paused --> cancelled: cancel
-    completed --> [*]
-    failed --> pending: retry
-    cancelled --> [*]
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
+flowchart TB
+    IN([开始]) --> P[pending]
+
+    P -->|Worker 启动| R[running]
+    R -->|正常结束| C[completed]
+    C --> OUT([结束])
+
+    R -->|pause| U[paused]
+    U -->|resume| R
+
+    R -->|未捕获异常| F[failed]
+    F -->|retry| P
+
+    P -->|cancel| X[cancelled]
+    R -->|cancel| X
+    U -->|cancel| X
+    X --> OUT
 ```
+
+
+
+**转移一览（与上图一一对应）**
+
+
+| #   | 源状态                        | 条件 / API                                | 目标状态      |
+| --- | -------------------------- | --------------------------------------- | --------- |
+| 1   | —                          | 创建任务                                    | pending   |
+| 2   | pending                    | Worker `start_task`                     | running   |
+| 3   | running                    | `complete_task`（遍历结束或 0 篇说明）            | completed |
+| 4   | running                    | `POST .../pause`                        | paused    |
+| 5   | paused                     | `POST .../resume`                       | running   |
+| 6   | running                    | 未捕获异常 `fail_task`                       | failed    |
+| 7   | failed                     | `POST .../retry`                        | pending   |
+| 8   | pending / running / paused | `POST .../cancel` 或 Worker 检测到 cancel 键 | cancelled |
+
+
+**与代码对齐**：`src/models/task_models.py` 中 `TaskStatus`；`can_pause` / `can_resume` / `can_cancel` / `can_retry` 属性。
 
 ---
 
 ## 6. 单篇论文处理状态（PaperProcessingStatus）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 stateDiagram-v2
     [*] --> processing: 开始处理
     processing --> skipped: Radar 分诊拒\n或领域锁 false
@@ -203,15 +263,18 @@ stateDiagram-v2
     failed --> [*]
 ```
 
+
+
 说明：仅 `FAILED` 会由 `_process_paper_with_one_retry_on_failure` 再跑一轮；`SKIPPED` 不重试。
 
 ---
 
 ## 7. arXiv 抓取子流水线（Radar 内部）
 
-在 **`fetch_recent_papers_with_stats`** 的扫描循环中，对每篇候选 arXiv `Result`：
+在 `**fetch_recent_papers_with_stats**` 的扫描循环中，对每篇候选 arXiv `Result`：
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TD
     A["arxiv.Result\n按提交时间倒序"] --> B["neo4j_client.check_paper_exists"]
     B -->|已存在| Z["返回 None\n不计入本轮新篇"]
@@ -227,6 +290,8 @@ flowchart TD
     I --> J["PaperContent\nsource 标记"]
 ```
 
+
+
 **查询构建**：`build_optimized_query(user_query, domain_preset)` — 用户 `all:"..."` 与预设类目分支 **OR** 合并，再套 `ANDNOT` 排除词；`custom` 预设原样返回用户字符串。
 
 ---
@@ -234,6 +299,7 @@ flowchart TD
 ## 8. 任务主循环 + 单篇萃取（与时序对照）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 sequenceDiagram
     autonumber
     participant API as task_routes
@@ -269,6 +335,8 @@ sequenceDiagram
     end
 ```
 
+
+
 ---
 
 ## 9. 单篇 `_process_paper_async` 详解（Worker）
@@ -276,6 +344,7 @@ sequenceDiagram
 Mermaid 的 `sequenceDiagram` **不宜**在 `alt` 内再套 `opt`，故拆成单层分支；与代码路径一致。
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 sequenceDiagram
     autonumber
     participant W as Worker
@@ -305,6 +374,8 @@ sequenceDiagram
     end
 ```
 
+
+
 函数级细节：`extract` 使用 `llm_extractor_model`、`response_format=json_object`；`embedding` 仅当 `len(vec)==1536` 写入；`record_paper_fetch_contribution` 仅在 `owner_user_id` 与 `task_id` 非空时调用。
 
 **注意**：**分诊**在 Radar 下载全文**之前**；**领域锁**在萃取 JSON 内再次约束。两者语义不同：前者省下载与 Token，后者防全文萃取阶段模型误判。
@@ -313,33 +384,93 @@ sequenceDiagram
 
 ## 10. Neo4j 图模型（关系 + 关键属性）
 
+> **读图顺序**：先看「图 1」论文与周边实体；再看「图 2」**仅描述 Method 之间的两类有向边**（避免与图 1 的线缠在一起）。**箭头方向**与 Cypher `MERGE (a)-[r:TYPE]->(b)` 一致。
+
+### 图 1 — 以 `Paper` 为中心的入库子图（`upsert_paper_graph`）
+
 ```mermaid
-flowchart LR
-    P["Paper\narxiv_id MERGE\nsummary summary_zh embedding"]
-    A["Author\nname"]
-    T["Task\nname"]
-    D["Dataset\nname"]
-    M0["Method\nname 归一化键\noriginal_name 展示"]
-    M1["Method"]
-    Mt["Metric"]
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
+flowchart TB
+    subgraph Pnode["节点: Paper"]
+        P["Paper\n────────────\nMERGE 键 · arxiv_id\n────────────\ntitle · published_date · url\ncore_problem\nsummary · summary_zh\nreasoning_process\nembedding LIST"]
+    end
+
+    subgraph Ring["与论文直接相连"]
+        A["Author\nMERGE 键 · name\n（strip 后原文大小写）"]
+        T["Task\nMERGE 键 · name\noriginal_name 展示"]
+        D["Dataset\nMERGE 键 · name\noriginal_name 展示"]
+        Mp["Method 本篇提出\nMERGE 键 · name 归一化\noriginal_name 展示\ndescription · core_architecture\nkey_innovations · limitations"]
+    end
 
     P -->|WRITTEN_BY| A
     P -->|ADDRESSES| T
-    P -->|PROPOSES| M0
+    P -->|PROPOSES| Mp
     P -->|EVALUATED_ON| D
-    P -->|MEASURES| Mt
-    M0 -->|APPLIED_TO| T
-    M0 -->|"IMPROVES_UPON\ndataset metrics_improvement\ndiscovered_at"| M1
-    M0 -->|"EVOLVED_FROM\nreason discovered_at\n子→祖"| M1
+    Mp -->|APPLIED_TO| T
 ```
 
-**写入契约**：`src/models/schemas.py` 中 `ExtractionData`、`KnowledgeGraphNodes`（`evolution_lineages`、`comparisons`）经 `neo4j_client.upsert_paper_graph` 展开为上述边。
+说明：
+
+- **`EVALUATED_ON → Dataset`**：在 `comparisons` 里**带非空 dataset** 时写入；同一篇可连多个 Dataset。
+- **`MEASURES → Metric`**：图模型仍保留该关系类型（读库/导入/历史数据可见）；**当前 v2 萃取主路径**把实验指标写在 **`IMPROVES_UPON` 边属性**上，见下图与边属性表。
+
+### 图 2 — `Method` 之间：技术血脉 vs 实验对比（切勿画进图 1 混线）
+
+**`MP` 与图 1 中「Method 本篇提出」为同一节点**（同一 `name` 归一化键，此处只画两条出边以免与论文辐射边交叉）。
+
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
+flowchart TB
+    MP["Method · 本篇提出\n（= 图 1 的 PROPOSES 目标）"]
+
+    MA["Method · 祖先\n被继承 / 启发源"]
+    MB["Method · 基线\n对比实验中的 baseline"]
+
+    MP -->|"EVOLVED_FROM\n方向：子 → 祖"| MA
+    MP -->|"IMPROVES_UPON\n方向：提出方 → 基线"| MB
+```
+
+**两类边的语义（必背）**
+
+| 关系 | 方向 | JSON 来源 | 含义 |
+|------|------|-----------|------|
+| `EVOLVED_FROM` | **(子 Method) → (祖 Method)** | `evolution_lineages` | 本篇方法在思路上**建立在谁之上 / 受谁启发** |
+| `IMPROVES_UPON` | **(提出方 Method) → (基线 Method)** | `comparisons` | 在实验上**相对某 baseline 的提升**（数据集与指标在边上） |
+
+**边属性（与 `neo4j_client.upsert_paper_graph` 一致）**
+
+| 关系 | 边上属性 |
+|------|----------|
+| `EVOLVED_FROM` | `reason`，`discovered_at`，`source_papers` |
+| `IMPROVES_UPON` | `dataset`，`metrics_improvement`，`discovered_at`，`source_papers` |
+
+`source_papers`：字符串列表，记录**哪些 arxiv_id 贡献过该条边**（重复入库时累加，非覆盖）。
+
+### 节点 MERGE 键速查
+
+| Label | MERGE 键 | 备注 |
+|-------|----------|------|
+| Paper | `arxiv_id` | |
+| Author | `name` | |
+| Task | `name` | 归一化；`original_name` 存展示 |
+| Dataset | `name` | 归一化；`original_name` |
+| Method | `name` | **归一化键**；`original_name` 与列表/进化树展示一致 |
+
+### 写入契约
+
+- **Pydantic**：`src/models/schemas.py` → `ExtractionData`、`KnowledgeGraphNodes`（`evolution_lineages`、`comparisons`）。
+- **写入**：`src/database/neo4j_client.py` → `upsert_paper_graph`（**一律 `MERGE` + 参数化**；禁止裸 `CREATE` 防重复跑任务膨胀图）。
+
+### 溯源补充（非萃取主图）
+
+单篇成功入库且带 `owner_user_id` / `task_id` 时，可额外写入 **`Paper -[:FETCHED_BY]-> ContributorAccount`**（贡献者与 Redis 任务 ID），便于运营统计；与上图「知识结构」并列理解即可。
 
 ---
 
 ## 11. 进化树查询逻辑（Cypher 要点）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TB
     IN["method_name 原始字符串"] --> NORM["_normalize_name\n小写/去后缀/连字符"]
     NORM --> MATCH["MATCH Method\nname 或 original_name 匹配"]
@@ -351,29 +482,36 @@ flowchart TB
     API --> FE["/evolution\nbuildEvolutionFlow 瀑布布局"]
 ```
 
+
+
 扩展：`GET /graph/method/{name}/evolution?depth=1..5&direction=ancestors|descendants|both`。
 
 ---
 
 ## 12. 论文语义检索（向量 + 双阈值）
 
-常量见 **`neo4j_client.py`**（与 `text-embedding-3-small` 1536 维一致）：
+常量见 `**neo4j_client.py**`（与 `text-embedding-3-small` 1536 维一致）：
 
-| 参数 | 典型值 | 作用 |
-|------|--------|------|
-| 索引名 | `paper_embedding` | Neo4j 向量索引 |
-| `_VECTOR_MIN_SCORE` | 0.42 | 绝对相似度下限，防「全库都像」 |
-| `_VECTOR_RELATIVE_FLOOR` | 0.88 | 相对第一名比例，砍掉弱相关尾巴 |
-| `_VECTOR_SCAN_CAP` | 3000 | 单次向量查询扫描上限 |
-| 查询向量缓存 | TTL 300s，最多 256 条 | 重复 query 减 Embedding 调用 |
+
+| 参数                       | 典型值               | 作用                      |
+| ------------------------ | ----------------- | ----------------------- |
+| 索引名                      | `paper_embedding` | Neo4j 向量索引              |
+| `_VECTOR_MIN_SCORE`      | 0.42              | 绝对相似度下限，防「全库都像」         |
+| `_VECTOR_RELATIVE_FLOOR` | 0.88              | 相对第一名比例，砍掉弱相关尾巴         |
+| `_VECTOR_SCAN_CAP`       | 3000              | 单次向量查询扫描上限              |
+| 查询向量缓存                   | TTL 300s，最多 256 条 | 重复 query 减 Embedding 调用 |
+
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart LR
     Q["用户 query"] --> E["Embedding API"]
     E --> V["Neo4j vector\npaper_embedding"]
     V --> F["双阈值过滤\nmin_score 与相对顶分"]
     F --> R["papers 分页"]
 ```
+
+
 
 关键词模式：`search_mode=keyword`，`title/core_problem/method CONTAINS`。
 
@@ -382,6 +520,7 @@ flowchart LR
 ## 13. 鉴权路径（JWT 双栈 + 开发旁路）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TB
     subgraph Headers["请求头"]
         BA["Authorization: Bearer access_token"]
@@ -406,13 +545,15 @@ flowchart TB
     AT --> ADMTOK["admin 令牌校验"]
 ```
 
+
+
 ---
 
 ## 14. Next.js 路由守卫与公开路径
 
-**`middleware.ts`**：`createServerClient` 读 Cookie → `getUser()`；未登录且非公开路径 → `/login?next=`。
+`**middleware.ts**`：`createServerClient` 读 Cookie → `getUser()`；未登录且非公开路径 → `/login?next=`。
 
-**`lib/authRoutes.ts`** `isPublicRoute`：
+`**lib/authRoutes.ts**` `isPublicRoute`：
 
 - `/` 首页
 - `/login` 及子路径
@@ -421,6 +562,7 @@ flowchart TB
 其余如 `/papers`、`/tasks`、`/graph`、`/evolution`、`/admin` 均需会话。
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart LR
     REQ["请求 path"] --> AUTH{"已登录?"}
     AUTH -->|否| PUB{"isPublicRoute?"}
@@ -429,11 +571,14 @@ flowchart LR
     AUTH -->|是| OK
 ```
 
+
+
 ---
 
 ## 15. 配额与退款（deps_quota + pipeline）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TD
     CT["POST /api/v1/tasks\nPOST .../retry"] --> C1["consume_one_task_quota\n402 quota_exhausted\n403 banned / no_profile"]
     PT["POST /api/v1/pipeline/trigger"] --> Cn["consume_n_task_quotas\nn=min(max_results,30)"]
@@ -442,6 +587,8 @@ flowchart TD
     C1 -->|成功| TSK["创建任务 / dispatch"]
 ```
 
+
+
 `AUTH_DISABLED=true` 时跳过 RPC（仅本地调试）。
 
 ---
@@ -449,6 +596,7 @@ flowchart TD
 ## 16. 任务 API 一览（与前端 taskStore 对齐）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart LR
     subgraph Write["写"]
         P1["POST /api/v1/tasks"]
@@ -472,11 +620,14 @@ flowchart LR
     Read --> ACL
 ```
 
+
+
 ---
 
 ## 17. 图与论文只读 API（节选）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TB
     subgraph PaperLib["文库"]
         A1["GET /papers?query&task_topic&limit&offset&search_mode"]
@@ -500,30 +651,35 @@ flowchart TB
     end
 ```
 
+
+
 ---
 
 ## 18. 管理端 API（admin_routes.py）
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/v1/admin/users` | GoTrue + profiles 合并列表 |
-| POST | `/users/{id}/ban` `/unban` | 封禁 |
-| POST | `/users/{id}/refill-quota` | 配额充值 |
-| GET | `/system-settings` | `triage_threshold` `html_first_enabled` |
-| PATCH | `/system-settings` | 同上 |
-| GET | `/system-status` | Neo4j/Redis/队列粗指标 |
-| POST | `/clear-all-data` | body `confirm: DELETE_ALL` + token |
-| POST | `/heal-graph` | 图谱自愈 |
-| GET | `/export-graph` | JSON 快照 |
-| POST | `/import-graph` | merge / replace |
 
-依赖 **`require_admin`**：JWT `role=admin` 或 `X-ArxPrism-Admin-Token` 与 `ADMIN_RESET_TOKEN` 一致（见代码）。
+| 方法    | 路径                         | 说明                                      |
+| ----- | -------------------------- | --------------------------------------- |
+| GET   | `/api/v1/admin/users`      | GoTrue + profiles 合并列表                  |
+| POST  | `/users/{id}/ban` `/unban` | 封禁                                      |
+| POST  | `/users/{id}/refill-quota` | 配额充值                                    |
+| GET   | `/system-settings`         | `triage_threshold` `html_first_enabled` |
+| PATCH | `/system-settings`         | 同上                                      |
+| GET   | `/system-status`           | Neo4j/Redis/队列粗指标                       |
+| POST  | `/clear-all-data`          | body `confirm: DELETE_ALL` + token      |
+| POST  | `/heal-graph`              | 图谱自愈                                    |
+| GET   | `/export-graph`            | JSON 快照                                 |
+| POST  | `/import-graph`            | merge / replace                         |
+
+
+依赖 `**require_admin**`：JWT `role=admin` 或 `X-ArxPrism-Admin-Token` 与 `ADMIN_RESET_TOKEN` 一致（见代码）。
 
 ---
 
 ## 19. 前端页面 ↔ 主要 API
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart LR
     subgraph Pages["App Router"]
         H["/"]
@@ -545,11 +701,14 @@ flowchart LR
     ADM --> M1["adminApi + meApi"]
 ```
 
+
+
 ---
 
 ## 20. LLM 配置面（环境变量）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart LR
     subgraph Chat["Chat 多模型"]
         T["LLM_TRIAGE_MODEL"]
@@ -573,11 +732,14 @@ flowchart LR
     Conn --> EM["LLM_EMBEDDING_MODEL"]
 ```
 
+
+
 ---
 
 ## 21. Celery 与进程内回退
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TD
     R["Redis ping 失败?"] -->|是| SYNC["get_celery_app → None"]
     R -->|否| CEL["celery 实例 broker=redis_url"]
@@ -588,6 +750,8 @@ flowchart TD
     CEL --> WK["Worker 进程\n全局 event loop\n_run_async(coro)"]
 ```
 
+
+
 Worker 配置摘录：`task_soft_time_limit=500`、`task_time_limit=600`、`worker_prefetch_multiplier=1`、`task_acks_late=True`。
 
 ---
@@ -595,6 +759,7 @@ Worker 配置摘录：`task_soft_time_limit=500`、`task_time_limit=600`、`work
 ## 22. 实体归一化（防线 2，`_normalize_name`）
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','primaryColor':'#e0f2fe','primaryTextColor':'#0c4a6e','primaryBorderColor':'#0284c7','secondaryColor':'#f8fafc','tertiaryColor':'#f1f5f9','lineColor':'#64748b','secondaryTextColor':'#334155','tertiaryTextColor':'#475569','mainBkg':'#ffffff','nodeBorder':'#cbd5e1','defaultLinkColor':'#64748b','clusterBkg':'#f8fafc','clusterBorder':'#e2e8f0','edgeLabelBackground':'#f8fafc','titleColor':'#0f172a','actorBkg':'#e0f2fe','actorBorder':'#0284c7','actorTextColor':'#0c4a6e','signalColor':'#475569','activationBkgColor':'#e2e8f0','activationBorderColor':'#94a3b8','noteBkgColor':'#fffbeb','noteTextColor':'#78350f','noteBorderColor':'#f59e0b'}}}%%
 flowchart TD
     S["原始方法名字符串"] --> L["lower trim"]
     L --> X["正则去尾词\nmodel framework algorithm …"]
@@ -603,11 +768,14 @@ flowchart TD
     T --> K["Method MERGE 键 name"]
 ```
 
-LLM **`EntityResolutionResponse`** 聚类在流水线/管理端 heal 中用于**同义合并**（具体调用路径以 `neo4j_client` 与 admin `heal-graph` 为准）。
+
+
+LLM `**EntityResolutionResponse**` 聚类在流水线/管理端 heal 中用于**同义合并**（具体调用路径以 `neo4j_client` 与 admin `heal-graph` 为准）。
 
 ---
 
 ## 维护说明
 
 1. **图模型**、**Redis 键**、**API 路径**、**阈值常量** 以代码为准；改代码请同步改本节对应图或表格。
-2. `ARCHITECTURE.md` 若与 **`EVOLVED_FROM` 进化树**、**Metric 节点** 等描述冲突，以 **`neo4j_client._REL_TYPES`** 与本文为准。
+2. `ARCHITECTURE.md` 若与 `**EVOLVED_FROM` 进化树**、**Metric 节点** 等描述冲突，以 `**neo4j_client._REL_TYPES`** 与本文为准。
+
