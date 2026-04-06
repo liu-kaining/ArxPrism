@@ -1,0 +1,606 @@
+# ArxPrism 架构与核心能力 — Mermaid 图集（细化版）
+
+本文档用 Mermaid 描述部署、组件、**Redis 键空间**、**任务/论文状态机**、**抓取与双道门禁**、**单篇处理全链路**、**Neo4j 与向量检索**、**鉴权与配额**、**管理端 API** 与产品动线。与当前代码一致；实现变更时请同步改本文档。
+
+渲染：GitHub、VS Code（Mermaid 插件）、Notion、语雀等均可识别 ` ```mermaid ` 块。
+
+---
+
+## 1. 系统上下文（C4 Context，带数据面标注）
+
+```mermaid
+flowchart TB
+    subgraph Users["使用者"]
+        U1["研发 / SRE / AIOps"]
+        U2["管理员"]
+    end
+
+    subgraph ArxPrism["ArxPrism"]
+        FE["Next.js 14\nApp Router"]
+        API["FastAPI\nsrc/main.py"]
+        WK["Celery Worker\nsrc/worker/tasks.py"]
+    end
+
+    SB[("Supabase\nGoTrue JWT\npublic.profiles\nRPC 配额")]
+    N4j[("Neo4j 5.x\n图 + paper_embedding\n向量索引")]
+    RD[("Redis 7\nCelery broker/backend\narxprism:* 任务")]
+    AX["arXiv API / CDN\nHTML 实验页 / PDF"]
+    LLM["OpenAI 兼容 Chat\n分诊 / 萃取 / 翻译 / 对齐"]
+    EMB["Embeddings API\n默认 text-embedding-3-small"]
+
+    U1 --> FE
+    U2 --> FE
+    FE -->|"Cookie 会话 + fetch Bearer"| API
+    FE --> SB
+    API -->|"JWKS 或 HS256 验签"| SB
+    API -->|"bolt://"| N4j
+    API -->|"读写作业 JSON"| RD
+    API -->|"delay run_task_pipeline_task"| RD
+    WK --> RD
+    WK -->|"arxiv 包 + httpx"| AX
+    WK --> LLM
+    WK --> EMB
+    WK --> N4j
+```
+
+---
+
+## 2. 部署拓扑（Docker Compose + 运维参数）
+
+```mermaid
+flowchart TB
+    subgraph Svc["Compose services"]
+        FE["frontend\nDockerfile.frontend\nnode 20"]
+        API["api\nDockerfile\nuvicorn --workers 2"]
+        WK["worker\ncelery -A src.worker.tasks\nconcurrency=4\nmax_tasks_per_child=50"]
+        N4j["neo4j:5.18\nheap up to 2G"]
+        RD["redis:7-alpine"]
+    end
+
+    subgraph Ports["宿主机映射"]
+        P3000["3000"]
+        P8000["8000"]
+        P7474["7474 Browser"]
+        P7687["7687 Bolt"]
+        P6379["6379"]
+    end
+
+    P3000 --- FE
+    P8000 --- API
+    P7474 --- N4j
+    P7687 --- N4j
+    P6379 --- RD
+
+    API --> N4j
+    API --> RD
+    WK --> N4j
+    WK --> RD
+    FE -->|"NEXT_PUBLIC_API_URL\n默认 http://localhost:8000"| API
+    WK -.->|"compose volumes\n./src:ro → 容器内 src"| DEVVOL["热更新 Worker 代码"]
+```
+
+---
+
+## 3. 后端分层（文件级依赖）
+
+```mermaid
+flowchart TB
+    subgraph Entry["入口"]
+        MAIN["src/main.py\nlifespan: neo4j 重连 + task_manager.connect"]
+    end
+
+    subgraph Routers["src/api/*.py"]
+        TR["task_routes\n/tasks CRUD pause resume cancel retry"]
+        RR["routes\npipeline graph papers"]
+        AR["arxiv_routes\npreview-search"]
+        ME["me_routes\n/me profile"]
+        AD["admin_routes\n/admin API"]
+        AUTH["auth.py\nCurrentUser require_user require_admin"]
+        DQ["deps_quota.py\nconsume_one_task_quota\nrefund_n_task_quotas"]
+    end
+
+    subgraph Svc["src/services"]
+        RAD["arxiv_radar.py\nbuild_optimized_query\n_fetch_paper_with_dedup"]
+        LLM["llm_extractor.py\nLLMExtractor"]
+        TM["task_manager.py\nRedis Task JSON"]
+        RUN["runtime_settings.py\ntriage_threshold html_first"]
+        SBK["supabase_backend.py\nRPC JWT Admin API"]
+    end
+
+    subgraph DB["src/database"]
+        NC["neo4j_client.py"]
+    end
+
+    subgraph Worker["src/worker"]
+        TSK["tasks.py\n_execute_task_pipeline\n_process_paper_async"]
+    end
+
+    MAIN --> Routers
+    TR --> AUTH
+    TR --> DQ
+    TR --> TM
+    TR --> TSK
+    RR --> AUTH
+    RR --> NC
+    AD --> AUTH
+    AD --> NC
+    AD --> SBK
+    AUTH --> SBK
+    TSK --> RAD
+    TSK --> LLM
+    TSK --> NC
+    TSK --> TM
+    RAD --> RUN
+    RAD --> LLM
+    RAD --> NC
+```
+
+---
+
+## 4. Redis 键空间（任务与 Celery）
+
+```mermaid
+flowchart LR
+    subgraph TaskKeys["任务状态 task_manager.py"]
+        K1["arxprism:task:{uuid}\nSETEX TASK_TTL=7d\nJSON: Task"]
+        K2["arxprism:task:{uuid}:pause\n存在即暂停"]
+        K3["arxprism:task:{uuid}:cancel\n存在即取消"]
+        K4["arxprism:tasks:recent:{user_id}\nLPUSH 最多100"]
+        K5["arxprism:tasks:recent:_global\n管理员看全站"]
+    end
+
+    subgraph Broker["Celery / 运维"]
+        Q["list key `celery`\nLLEN 粗队列长度"]
+        ARX["arxiv_global_fetch_lock\nSETNX PX=3000ms\n跨 Worker 3s 间隔"]
+    end
+
+    subgraph Wipe["管理端清空"]
+        W["SCAN match arxprism:*\nDELETE 批量"]
+    end
+
+    W --> K1
+    W --> K2
+    W --> K3
+    W --> K4
+    W --> K5
+```
+
+---
+
+## 5. 任务状态机（TaskStatus）
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: create_task\nPOST /api/v1/tasks
+    pending --> running: start_task\nWorker 开始
+    running --> paused: POST .../pause\nSET pause key
+    paused --> running: POST .../resume\nDEL pause key
+    running --> completed: complete_task\n遍历结束
+    running --> failed: fail_task\n未捕获异常
+    pending --> cancelled: cancel\n或 Worker 检测 cancel key
+    running --> cancelled: cancel key
+    paused --> cancelled: cancel while paused
+    completed --> [*]
+    failed --> pending: POST .../retry\n重新 dispatch
+    cancelled --> [*]
+```
+
+---
+
+## 6. 单篇论文处理状态（PaperProcessingStatus）
+
+```mermaid
+stateDiagram-v2
+    [*] --> processing: _process_paper_async 开始
+    processing --> skipped: triage 已挡在 Radar\n或 extraction\nis_relevant_to_domain=false
+    processing --> failed: extraction None\nextraction_data 缺失\nNeo4j upsert false\n异常
+    processing --> success: upsert OK
+    failed --> processing: _process_paper_with_one_retry_on_failure\n仅 FAILED 再跑 1 次\nSKIPPED 不重试
+    success --> [*]
+    skipped --> [*]
+    failed --> [*]
+```
+
+---
+
+## 7. arXiv 抓取子流水线（Radar 内部）
+
+在 **`fetch_recent_papers_with_stats`** 的扫描循环中，对每篇候选 arXiv `Result`：
+
+```mermaid
+flowchart TD
+    A["arxiv.Result\n按提交时间倒序"] --> B["neo4j_client.check_paper_exists"]
+    B -->|已存在| Z["返回 None\n不计入本轮新篇"]
+    B -->|不存在| C["get_runtime_pipeline_settings\ntriage_threshold"]
+    C --> D["llm_extractor.triage_paper\ntitle + abstract\nfail-open → True"]
+    D -->|不相关| T1["ensure_ingest_tombstone\ntriage_rejected"]
+    T1 --> Z
+    D -->|相关| E["_global_rate_limit_wait\nRedis SETNX 锁"]
+    E --> F["_fetch_paper_content\nhtml_first 关则跳过 HTML"]
+    F --> G["HTML → markdownify"]
+    G -->|失败/过短| H["PyMuPDF PDF"]
+    H -->|失败| I["summary 兜底"]
+    I --> J["PaperContent\nsource 标记"]
+```
+
+**查询构建**：`build_optimized_query(user_query, domain_preset)` — 用户 `all:"..."` 与预设类目分支 **OR** 合并，再套 `ANDNOT` 排除词；`custom` 预设原样返回用户字符串。
+
+---
+
+## 8. 任务主循环 + 单篇萃取（与时序对照）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant API as task_routes
+    participant SB as Supabase RPC
+    participant RD as Redis
+    participant CE as Celery
+    participant WK as Worker _execute_task_pipeline
+    participant RAD as ArxivRadar
+    participant PP as _process_paper_with_one_retry
+
+    API->>SB: rpc_try_consume_task_quota(user_id)\n创建/重试各 1 点
+    API->>RD: save_task pending + recent list
+    API->>CE: run_task_pipeline_task.delay(task_id, query, preset, max, owner)
+    API-->>API: 201 task_id
+
+    CE->>WK: 执行
+    WK->>RD: start_task → running
+    WK->>RAD: fetch_recent_papers_with_stats\n(内含分诊+抓取+去重)
+    RAD-->>WK: List[PaperContent], ArxivFetchStats
+
+    alt 0 篇
+        WK->>RD: complete_task(completion_summary=\n检索0篇/扫满上限等)
+    else 有论文
+        WK->>RD: update_progress(total=len)
+        loop 每一篇
+            WK->>RD: is_cancelled? → return
+            WK->>RD: is_paused? → wait_while_paused
+            WK->>RD: update_progress(current_paper_*)
+            WK->>PP: content_dict + task_id + owner_user_id
+            PP-->>WK: PaperProcessingResult
+            WK->>RD: add_paper_result
+        end
+        WK->>RD: complete_task
+    end
+```
+
+---
+
+## 9. 单篇 `_process_paper_async` 详解（Worker）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Worker
+    participant L as llm_extractor
+    participant N as neo4j_client
+    participant E as Embeddings
+
+    W->>L: extract(paper_text, meta)\nmodel=llm_extractor_model\njson_object + Pydantic\nPaperExtractionResponse
+    alt extraction is None
+        W-->>W: FAILED 重试包装器可再跑 1 次
+    else is_relevant_to_domain == false
+        W->>N: ensure_ingest_tombstone(domain_gatekeeper)
+        W-->>W: SKIPPED
+    else extraction_data missing
+        W-->>W: FAILED
+    else 继续
+        W->>L: translate_arxiv_abstract_to_zh(summary)
+        W->>W: embed_text = title + core_problem + summary
+        W->>E: generate_embedding(embed_text)\n须 1536 维才写入
+        W->>N: upsert_paper_graph(extraction)\nMERGE 节点/边
+        alt upsert false
+            W-->>W: FAILED
+        else OK
+            opt W->>N: record_paper_fetch_contribution\nuser_id + redis_task_id
+            W-->>W: SUCCESS + method_name
+        end
+    end
+```
+
+**注意**：**分诊**在 Radar 下载全文**之前**；**领域锁**在萃取 JSON 内再次约束。两者语义不同：前者省下载与 Token，后者防全文萃取阶段模型误判。
+
+---
+
+## 10. Neo4j 图模型（关系 + 关键属性）
+
+```mermaid
+flowchart LR
+    P["Paper\narxiv_id MERGE\nsummary summary_zh embedding"]
+    A["Author\nname"]
+    T["Task\nname"]
+    D["Dataset\nname"]
+    M0["Method\nname 归一化键\noriginal_name 展示"]
+    M1["Method"]
+    Mt["Metric"]
+
+    P -->|WRITTEN_BY| A
+    P -->|ADDRESSES| T
+    P -->|PROPOSES| M0
+    P -->|EVALUATED_ON| D
+    P -->|MEASURES| Mt
+    M0 -->|APPLIED_TO| T
+    M0 -->|"IMPROVES_UPON\ndataset metrics_improvement\ndiscovered_at"| M1
+    M0 -->|"EVOLVED_FROM\nreason discovered_at\n子→祖"| M1
+```
+
+**写入契约**：`src/models/schemas.py` 中 `ExtractionData`、`KnowledgeGraphNodes`（`evolution_lineages`、`comparisons`）经 `neo4j_client.upsert_paper_graph` 展开为上述边。
+
+---
+
+## 11. 进化树查询逻辑（Cypher 要点）
+
+```mermaid
+flowchart TB
+    IN["method_name 原始字符串"] --> NORM["_normalize_name\n小写/去后缀/连字符"]
+    NORM --> MATCH["MATCH Method\nm.name = norm\nOR lower(original_name)=lower(raw)"]
+    MATCH --> ANC["祖先: (t)-[:EVOLVED_FROM*1..3]->(a)"]
+    MATCH --> DESC["后代: (t)<-[:EVOLVED_FROM*1..3]-(d)"]
+    ANC --> GEN["generation 负数=祖先\n正数=后代 0=目标"]
+    DESC --> GEN
+    GEN --> API["GET /api/v1/graph/evolution"]
+    API --> FE["/evolution\nbuildEvolutionFlow 瀑布布局"]
+```
+
+扩展：`GET /graph/method/{name}/evolution?depth=1..5&direction=ancestors|descendants|both`。
+
+---
+
+## 12. 论文语义检索（向量 + 双阈值）
+
+常量见 **`neo4j_client.py`**（与 `text-embedding-3-small` 1536 维一致）：
+
+| 参数 | 典型值 | 作用 |
+|------|--------|------|
+| 索引名 | `paper_embedding` | Neo4j 向量索引 |
+| `_VECTOR_MIN_SCORE` | 0.42 | 绝对相似度下限，防「全库都像」 |
+| `_VECTOR_RELATIVE_FLOOR` | 0.88 | 相对第一名比例，砍掉弱相关尾巴 |
+| `_VECTOR_SCAN_CAP` | 3000 | 单次向量查询扫描上限 |
+| 查询向量缓存 | TTL 300s，最多 256 条 | 重复 query 减 Embedding 调用 |
+
+```mermaid
+flowchart LR
+    Q["用户 query"] --> E["Embedding API"]
+    E --> V["Neo4j vector search\npaper_embedding"]
+    V --> F["score >= max(0.42, top_score×0.88)"]
+    F --> R["分页 papers + total"]
+```
+
+关键词模式：`search_mode=keyword`，`title/core_problem/method CONTAINS`。
+
+---
+
+## 13. 鉴权路径（JWT 双栈 + 开发旁路）
+
+```mermaid
+flowchart TB
+    subgraph Headers["请求头"]
+        BA["Authorization: Bearer access_token"]
+        AT["X-ArxPrism-Admin-Token\n仅部分 admin 兼容"]
+    end
+
+    subgraph Decode["auth.py"]
+        AD["AUTH_DISABLED?\n固定 DEV_USER_ID admin"]
+        HS["HS256 + SUPABASE_JWT_SECRET\npython-jose audience=authenticated"]
+        JW["RS256/ES256\nPyJWKClient\n{SUPABASE_URL}/auth/v1/certs\nHeader 带 apikey+Bearer anon"]
+    end
+
+    subgraph Profile["profiles"]
+        P["supabase_backend.get_profile\nrole quota is_banned"]
+    end
+
+    BA --> AD
+    AD -->|否| HS
+    HS -->|alg 非 HS256| JW
+    HS --> Profile
+    JW --> Profile
+    AT --> require_admin 分支
+```
+
+---
+
+## 14. Next.js 路由守卫与公开路径
+
+**`middleware.ts`**：`createServerClient` 读 Cookie → `getUser()`；未登录且非公开路径 → `/login?next=`。
+
+**`lib/authRoutes.ts`** `isPublicRoute`：
+
+- `/` 首页
+- `/login` 及子路径
+- `/auth/*`（OAuth 回调等，避免破坏 PKCE）
+
+其余如 `/papers`、`/tasks`、`/graph`、`/evolution`、`/admin` 均需会话。
+
+```mermaid
+flowchart LR
+    REQ["请求 path"] --> AUTH{"已登录?"}
+    AUTH -->|否| PUB{"isPublicRoute?"}
+    PUB -->|是| OK["next()"]
+    PUB -->|否| RED["302 /login?next="]
+    AUTH -->|是| OK
+```
+
+---
+
+## 15. 配额与退款（deps_quota + pipeline）
+
+```mermaid
+flowchart TD
+    CT["POST /api/v1/tasks\nPOST .../retry"] --> C1["consume_one_task_quota\n402 quota_exhausted\n403 banned / no_profile"]
+    PT["POST /api/v1/pipeline/trigger"] --> Cn["consume_n_task_quotas\nn=min(max_results,30)"]
+    Cn --> DIS["trigger_pipeline_task_async"]
+    DIS -->|抛错| RF["refund_n_task_quotas(user_id,n)"]
+    C1 -->|成功| TSK["创建任务 / dispatch"]
+```
+
+`AUTH_DISABLED=true` 时跳过 RPC（仅本地调试）。
+
+---
+
+## 16. 任务 API 一览（与前端 taskStore 对齐）
+
+```mermaid
+flowchart LR
+    subgraph Write["写"]
+        P1["POST /api/v1/tasks"]
+        P2["POST .../pause"]
+        P3["POST .../resume"]
+        P4["POST .../cancel"]
+        P5["POST .../retry"]
+    end
+
+    subgraph Read["读"]
+        G1["GET /api/v1/tasks"]
+        G2["GET /api/v1/tasks/{id}"]
+        G3["GET /api/v1/tasks/presets"]
+    end
+
+    subgraph ACL["权限"]
+        R["require_user\n任务 404 若 owner≠本人且非 admin"]
+    end
+
+    Write --> ACL
+    Read --> ACL
+```
+
+---
+
+## 17. 图与论文只读 API（节选）
+
+```mermaid
+flowchart TB
+    subgraph PaperLib["文库"]
+        A1["GET /papers?query&task_topic&limit&offset&search_mode"]
+        A2["GET /papers/stats"]
+        A3["GET /papers/{arxiv_id}"]
+    end
+
+    subgraph GraphRO["图谱"]
+        B1["GET /graph/paper/{id}"]
+        B2["GET /graph/subgraph?center&depth&node_types"]
+        B3["GET /graph/overview"]
+        B4["GET /graph/evolution/methods"]
+        B5["GET /graph/evolution?method_name"]
+        B6["GET /graph/method/{name}"]
+        B7["GET /graph/method/{name}/papers"]
+        B8["GET /graph/method/{name}/evolution"]
+    end
+
+    subgraph Legacy["Legacy"]
+        L1["POST /pipeline/trigger\n202 Celery task_id"]
+    end
+```
+
+---
+
+## 18. 管理端 API（admin_routes.py）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/admin/users` | GoTrue + profiles 合并列表 |
+| POST | `/users/{id}/ban` `/unban` | 封禁 |
+| POST | `/users/{id}/refill-quota` | 配额充值 |
+| GET | `/system-settings` | `triage_threshold` `html_first_enabled` |
+| PATCH | `/system-settings` | 同上 |
+| GET | `/system-status` | Neo4j/Redis/队列粗指标 |
+| POST | `/clear-all-data` | body `confirm: DELETE_ALL` + token |
+| POST | `/heal-graph` | 图谱自愈 |
+| GET | `/export-graph` | JSON 快照 |
+| POST | `/import-graph` | merge / replace |
+
+依赖 **`require_admin`**：JWT `role=admin` 或 `X-ArxPrism-Admin-Token` 与 `ADMIN_RESET_TOKEN` 一致（见代码）。
+
+---
+
+## 19. 前端页面 ↔ 主要 API
+
+```mermaid
+flowchart LR
+    subgraph Pages["App Router"]
+        H["/"]
+        PL["/papers"]
+        PD["/papers/[arxivId]"]
+        TL["/tasks"]
+        TD["/tasks/[taskId]"]
+        GR["/graph"]
+        EV["/evolution"]
+        ADM["/admin"]
+    end
+
+    PL --> A1["paperApi.search + stats"]
+    PD --> A3["paperApi.detail"]
+    TL --> T1["taskApi list create"]
+    TD --> T2["taskApi get pause…"]
+    GR --> G1["graphApi paper subgraph"]
+    EV --> E1["evolutionApi tree + methods index"]
+    ADM --> M1["adminApi + meApi"]
+```
+
+---
+
+## 20. LLM 配置面（环境变量）
+
+```mermaid
+flowchart LR
+    subgraph Chat["Chat 多模型"]
+        T["LLM_TRIAGE_MODEL"]
+        X["LLM_EXTRACTOR_MODEL"]
+        R["LLM_RESOLUTION_MODEL"]
+    end
+
+    subgraph Conn["连接"]
+        B["LLM_BASE_URL + LLM_API_KEY"]
+        EB["LLM_EMBEDDING_BASE_URL 可选\n绕开网关 CSRF"]
+        EK["LLM_EMBEDDING_API_KEY 空则复用 KEY"]
+    end
+
+    subgraph Tunable["调参"]
+        MT["LLM_MAX_TOKENS"]
+        TMP["LLM_TEMPERATURE"]
+        RET["LLM_MAX_RETRIES + BASE_DELAY"]
+    end
+
+    Conn --> Chat
+    Conn --> EM["LLM_EMBEDDING_MODEL"]
+```
+
+---
+
+## 21. Celery 与进程内回退
+
+```mermaid
+flowchart TD
+    R["Redis ping 失败?"] -->|是| SYNC["get_celery_app → None"]
+    R -->|否| CEL["celery 实例 broker=redis_url"]
+
+    DIS["task_routes._dispatch_task_execution"] --> CEL
+    DIS -->|None| ASY["asyncio.create_task\nexecute_task_pipeline_async\n同进程跑流水线"]
+
+    CEL --> WK["Worker 进程\n全局 event loop\n_run_async(coro)"]
+```
+
+Worker 配置摘录：`task_soft_time_limit=500`、`task_time_limit=600`、`worker_prefetch_multiplier=1`、`task_acks_late=True`。
+
+---
+
+## 22. 实体归一化（防线 2，`_normalize_name`）
+
+```mermaid
+flowchart TD
+    S["原始方法名字符串"] --> L["lower trim"]
+    L --> X["正则去尾词\nmodel framework algorithm …"]
+    X --> R["非字母数字 → 连字符\n合并重复 -"]
+    R --> T["trim 连字符"]
+    T --> K["Method MERGE 键 name"]
+```
+
+LLM **`EntityResolutionResponse`** 聚类在流水线/管理端 heal 中用于**同义合并**（具体调用路径以 `neo4j_client` 与 admin `heal-graph` 为准）。
+
+---
+
+## 维护说明
+
+1. **图模型**、**Redis 键**、**API 路径**、**阈值常量** 以代码为准；改代码请同步改本节对应图或表格。
+2. `ARCHITECTURE.md` 若与 **`EVOLVED_FROM` 进化树**、**Metric 节点** 等描述冲突，以 **`neo4j_client._REL_TYPES`** 与本文为准。
