@@ -6,12 +6,12 @@
 
 ### 整体配色（`theme: base` + `themeVariables`）
 
-上一版偏 **浅天蓝 + 浅灰线**，在白底上对比度偏低，长时间阅读容易累眼。现改为 **中性暖灰（stone）+ 近黑文字 + 深灰连线**，子图略深于节点以分出层次；仍用 `%%{init: ...}%%` 注入，避免 Mermaid 默认黄底/淡紫。
+上一版偏 **浅天蓝 + 浅灰线**，在白底上对比度偏低；后一度把 **子图填成 stone-300 整块灰**，分组清晰但显得「脏」。现改为 **子图与画布同白**，仅靠 **stone-400 描边**圈出分组；节点仍为浅 stone-50 填充 + 深字深线，阅读不累。
 
 | 用途 | 色值 | 说明 |
 |------|------|------|
 | 画布 `mainBkg` | `#ffffff` | 纯白底 |
-| 子图 `clusterBkg` / `clusterBorder` | `#d6d3d1` / `#57534e` | stone-300 底 + stone-600 框，**明显区分**于节点 |
+| 子图 `clusterBkg` / `clusterBorder` | `#ffffff` / `#a8a29e` | **无底灰块**：与白底一体，**只留边框**区分 subgraph |
 | 节点填充 `primaryColor` | `#fafaf9` | stone-50，略暖、不晃眼 |
 | 节点字 / 边框 | `#1c1917` / `#44403c` | stone-900 字 + stone-700 框，**高可读** |
 | 连线 `lineColor` / `defaultLinkColor` | `#27272a` | zinc-800，箭头清晰 |
@@ -29,7 +29,7 @@
 从**使用者眼睛**出发：先登录进门，再可选「跑任务把论文写入图库」或「直接浏览已入库」；论文详情是**图谱 / 进化树**的常见入口。与 `middleware.ts` 保护范围、`Navbar` 导航一致。
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     subgraph P1["① 进门（未登录会被拦）"]
         LG["/login"]
@@ -76,7 +76,7 @@ flowchart TB
 ## 1. 系统上下文（C4 Context，带数据面标注）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     subgraph Users["使用者"]
         U1["研发 / SRE / AIOps"]
@@ -118,7 +118,7 @@ flowchart TB
 ## 2. 部署拓扑（Docker Compose + 运维参数）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     subgraph Svc["Compose services"]
         FE["frontend\nDockerfile.frontend\nnode 20"]
@@ -157,7 +157,7 @@ flowchart TB
 ## 3. 后端分层（文件级依赖）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     subgraph Entry["入口"]
         MAIN["src/main.py\nlifespan: neo4j 重连 + task_manager.connect"]
@@ -216,7 +216,7 @@ flowchart TB
 ## 4. Redis 键空间（任务与 Celery）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart LR
     subgraph TaskKeys["任务状态 task_manager.py"]
         K1["arxprism:task:{uuid}\nSETEX TASK_TTL=7d\nJSON: Task"]
@@ -258,7 +258,7 @@ flowchart LR
 - **completed**：全部论文处理完或「0 篇可处理」等正常收尾；**failed** 为未捕获异常。
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     IN([开始]) --> P[pending]
 
@@ -302,7 +302,7 @@ flowchart TB
 ## 6. 单篇论文处理状态（PaperProcessingStatus）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 stateDiagram-v2
     [*] --> processing: 开始处理
     processing --> skipped: Radar 分诊拒\n或领域锁 false
@@ -325,7 +325,7 @@ stateDiagram-v2
 在 `**fetch_recent_papers_with_stats**` 的扫描循环中，对每篇候选 arXiv `Result`：
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TD
     A["arxiv.Result\n按提交时间倒序"] --> B["neo4j_client.check_paper_exists"]
     B -->|已存在| Z["返回 None\n不计入本轮新篇"]
@@ -350,7 +350,7 @@ flowchart TD
 ## 8. 任务主循环 + 单篇萃取（与时序对照）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 sequenceDiagram
     autonumber
     participant API as task_routes
@@ -395,7 +395,7 @@ sequenceDiagram
 Mermaid 的 `sequenceDiagram` **不宜**在 `alt` 内再套 `opt`，故拆成单层分支；与代码路径一致。
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 sequenceDiagram
     autonumber
     participant W as Worker
@@ -440,7 +440,7 @@ sequenceDiagram
 ### 图 1 — 以 `Paper` 为中心的入库子图（`upsert_paper_graph`）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     subgraph Pnode["节点: Paper"]
         P["Paper\n────────────\nMERGE 键 · arxiv_id\n────────────\ntitle · published_date · url\ncore_problem\nsummary · summary_zh\nreasoning_process\nembedding LIST"]
@@ -470,7 +470,7 @@ flowchart TB
 **`MP` 与图 1 中「Method 本篇提出」为同一节点**（同一 `name` 归一化键，此处只画两条出边以免与论文辐射边交叉）。
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     MP["Method · 本篇提出\n（= 图 1 的 PROPOSES 目标）"]
 
@@ -521,7 +521,7 @@ flowchart TB
 ## 11. 进化树查询逻辑（Cypher 要点）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     IN["method_name 原始字符串"] --> NORM["_normalize_name\n小写/去后缀/连字符"]
     NORM --> MATCH["MATCH Method\nname 或 original_name 匹配"]
@@ -554,7 +554,7 @@ flowchart TB
 
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart LR
     Q["用户 query"] --> E["Embedding API"]
     E --> V["Neo4j vector\npaper_embedding"]
@@ -571,7 +571,7 @@ flowchart LR
 ## 13. 鉴权路径（JWT 双栈 + 开发旁路）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     subgraph Headers["请求头"]
         BA["Authorization: Bearer access_token"]
@@ -613,7 +613,7 @@ flowchart TB
 其余如 `/papers`、`/tasks`、`/graph`、`/evolution`、`/admin` 均需会话。
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart LR
     REQ["请求 path"] --> AUTH{"已登录?"}
     AUTH -->|否| PUB{"isPublicRoute?"}
@@ -629,7 +629,7 @@ flowchart LR
 ## 15. 配额与退款（deps_quota + pipeline）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TD
     CT["POST /api/v1/tasks\nPOST .../retry"] --> C1["consume_one_task_quota\n402 quota_exhausted\n403 banned / no_profile"]
     PT["POST /api/v1/pipeline/trigger"] --> Cn["consume_n_task_quotas\nn=min(max_results,30)"]
@@ -647,7 +647,7 @@ flowchart TD
 ## 16. 任务 API 一览（与前端 taskStore 对齐）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart LR
     subgraph Write["写"]
         P1["POST /api/v1/tasks"]
@@ -678,7 +678,7 @@ flowchart LR
 ## 17. 图与论文只读 API（节选）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TB
     subgraph PaperLib["文库"]
         A1["GET /papers?query&task_topic&limit&offset&search_mode"]
@@ -732,7 +732,7 @@ flowchart TB
 **用户先怎么走页面**：见文首 **「用户视角动线」**；本节强调各页对应的 `lib/api/client` 封装。
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart LR
     subgraph Pages["App Router"]
         H["/"]
@@ -761,7 +761,7 @@ flowchart LR
 ## 20. LLM 配置面（环境变量）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart LR
     subgraph Chat["Chat 多模型"]
         T["LLM_TRIAGE_MODEL"]
@@ -792,7 +792,7 @@ flowchart LR
 ## 21. Celery 与进程内回退
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TD
     R["Redis ping 失败?"] -->|是| SYNC["get_celery_app → None"]
     R -->|否| CEL["celery 实例 broker=redis_url"]
@@ -812,7 +812,7 @@ Worker 配置摘录：`task_soft_time_limit=500`、`task_time_limit=600`、`work
 ## 22. 实体归一化（防线 2，`_normalize_name`）
 
 ```mermaid
-%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#d6d3d1','clusterBorder':'#57534e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'ui-sans-serif,system-ui,sans-serif','fontSize':'16px','primaryColor':'#fafaf9','primaryTextColor':'#1c1917','primaryBorderColor':'#44403c','secondaryColor':'#f5f5f4','tertiaryColor':'#e7e5e4','lineColor':'#27272a','secondaryTextColor':'#1c1917','tertiaryTextColor':'#292524','mainBkg':'#ffffff','textColor':'#1c1917','nodeBorder':'#44403c','defaultLinkColor':'#27272a','clusterBkg':'#ffffff','clusterBorder':'#a8a29e','edgeLabelBackground':'#ffffff','titleColor':'#0c0a09','actorBkg':'#fafaf9','actorBorder':'#44403c','actorTextColor':'#1c1917','signalColor':'#27272a','signalTextColor':'#1c1917','activationBkgColor':'#e7e5e4','activationBorderColor':'#57534e','noteBkgColor':'#fef9c3','noteTextColor':'#422006','noteBorderColor':'#a16207'}}}%%
 flowchart TD
     S["原始方法名字符串"] --> L["lower trim"]
     L --> X["正则去尾词\nmodel framework algorithm …"]
